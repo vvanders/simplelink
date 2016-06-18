@@ -64,84 +64,97 @@ pub mod kiss {
         encoded.push(FEND);
     }
 
-    fn find_frame(data: &[u8]) -> Option<(usize, usize)> {
-        let (start, end) = data.iter()
-            .enumerate()
-            .fold((None,None), |(mut start, mut end), (idx, byte)| {
-            //Looking for start of the frame
-            if start.is_none() {
-                if *byte == FEND {
-                    start = Some(idx);
-                }
-            } else if end.is_none() {   //Looking for the end
-                if *byte == FEND {
-                    end = Some(idx);
-                }
-            }
-
-            (start, end)
-        });
-
-        start.and_then(|begin| {
-            end.and_then(|end| {
-                //Found a valid frame, return it
-                Some((begin, end))
-            })
-        })
-    }
-
     pub struct DecodedFrame {
         pub port: u8,
         pub bytes_read: usize
     }
 
-    pub fn decode(data: &[u8], decoded: &mut Vec<u8>) -> Option<DecodedFrame> {
-        decoded.reserve(data.len());
+    //@todo: Use a drain iterator here instead so we can remove + process in one pass
+    pub fn decode<T>(data: T, decoded: &mut Vec<u8>) -> Option<DecodedFrame> where T: Iterator<Item=u8> {
+        let (reserved, _) = data.size_hint();
+        decoded.reserve(reserved);
 
-        let (start, end) = match find_frame(data) {
-            Some((s, e)) => (s, e),
-            None => return None
-        };
-
-        let mut decode = data.iter().skip(start+1).take(end - start-1)
-            .scan(false, |was_esc, byte| {
-                let value = match *byte {
-                    FESC => {
-                        *was_esc = true;
-                        None
-                    },
-                    _ => {
-                        //If we were escaped then we need to look for our value
-                        if *was_esc {
-                            *was_esc = false;
-
-                            match *byte {
-                                TFEND => Some(FEND),
-                                TFESC => Some(FESC),
-                                _ => None   //This is a bad value, just discard the byte for now since we don't know how to handle it
+        let (_, port, last_idx) = data.enumerate()    //Keep track of idx so we can return the last idx we processed to the caller
+            //Find our first valid start + end frame
+            .scan((None, None), |&mut (ref mut start_frame, ref mut end_frame), (idx, byte)| {
+                //If we've already found a valid range then stop iterating
+                if start_frame.is_some() && end_frame.is_some() {
+                    None
+                } else {
+                    let value =
+                        //Looking for start of the frame
+                        if start_frame.is_none() {
+                            if byte == FEND {
+                                *start_frame = Some(idx);
+                                Some((idx, byte))
+                            } else {
+                                None
                             }
-                        } else {
-                            Some(*byte)
-                        }
+                        } else {   //Looking for the end
+                            if byte == FEND {
+                                //Empty frame, just restart the scan
+                                if start_frame.unwrap()+1 == idx {
+                                    *start_frame = Some(idx);
+                                } else {
+                                    *end_frame = Some(idx);
+                                }
+                            }
+
+                            Some((idx, byte))
+                        };
+
+                    Some(value)
+                }
+            })
+            //Filter out any empty frames or data we don't want to process
+            .filter_map(|x| {
+                x.and_then(|(idx, value)| {
+                    match value {
+                        FEND => None,   //Don't include frame delimiters
+                        _ => Some((idx, value))
                     }
+                })
+            })
+            //Decode escaped values
+            .scan(false, |was_esc, (idx, byte)| {
+                let value = if byte == FESC {
+                    *was_esc = true;
+                    None    //Don't include escaped characters
+                } else if *was_esc {
+                    *was_esc = false;
+                    
+                    match byte {
+                        TFEND => Some((idx, FEND)),
+                        TFESC => Some((idx, FESC)),
+                        _ => None //This is a bad value, just discard the byte for now since we don't know how to handle it
+                    }
+                } else {
+                    Some((idx, byte))
                 };
 
                 Some(value)
             })
-            .filter_map(|value| value);
+            .filter_map(|x| x)  //Skip things we don't want
+            //Decode frame into output buffer
+            .fold((decoded, None, None), |(out_decode, mut port, _), (idx, byte)| {
+                //If we've already defined the port that means we're on the data part of the frame
+                if port.is_some() {
+                    out_decode.push(byte);
+                } else {    //First byte is cmd + port, cmd should always be data(0x00)
+                    port = Some(byte >> 4);
+                }
 
-        let cmd = match decode.next() {
-            Some(byte) => byte,
-            _ => return None
-        };
+                (out_decode, port, Some(idx))
+            });
 
-        for byte in decode {
-            decoded.push(byte);
-        }
-
-        Some(DecodedFrame {
-            port: cmd >> 4,
-            bytes_read: end - start + 1
+        //Check if we found anything
+        port.and_then(|port| {
+            last_idx.and_then(|idx| {
+                Some(DecodedFrame {
+                    port: port,
+                    bytes_read: idx+2   //Note that since we truncate the FEND we need to add an extra offset here
+                })
+            })
         })
     }
 
@@ -192,7 +205,7 @@ pub mod kiss {
         let expected: Vec<u8> = source.collect();
 
         encode(expected.iter().map(|x| *x), &mut data, 5);
-        match decode(&data, &mut decoded) {
+        match decode(data.iter().cloned(), &mut decoded) {
             Some(result) => {
                 assert!(result.port == 5);
                 assert!(result.bytes_read == data.len());
@@ -202,11 +215,78 @@ pub mod kiss {
         }
     }
 
+    /*
+    #[cfg(test)]
+    fn test_decode_single(data: &mut Vec<u8>, expected: [u8]) {
+        let mut decoded = vec!();
+
+        match decode(&data, &mut decoded) {
+            Some(result) => {
+                assert!(result.port == 5);
+                assert!(result.bytes_read == data.len());
+                assert!(expected == decoded);
+
+                data.
+            },
+            None => assert!(false)
+        }
+    }
+    */
+
     #[test]
     fn test_encode_decode() {
         test_encode_decode_single(['T', 'E', 'S', 'T'].iter().map(|chr| *chr as u8));
         test_encode_decode_single(['H', 'E', 'L', 'L', 'O'].iter().map(|chr| *chr as u8));
         test_encode_decode_single([FEND, FESC].iter().map(|data| *data));
     }
+
+    #[test]
+    fn test_empty_frame() {
+        let mut data = vec!();
+        let expected: Vec<u8> = ['T', 'E', 'S', 'T'].iter().map(|chr| *chr as u8).collect();
+
+        data.push(FEND);
+        data.push(FEND);
+        data.push(FEND);
+
+        encode(expected.iter().cloned(), &mut data, 0);
+        
+        let mut decoded = vec!();
+        match decode(data.iter().cloned(), &mut decoded) {
+            Some(result) => {
+                assert!(result.bytes_read == data.len());
+                assert!(result.port == 0);
+
+                assert!(expected.iter().cloned().eq(decoded.into_iter()));
+            },
+            None => assert!(false)
+        }
+    }
+
+    /*
+    #[test]
+    fn test_two_frame() {
+        let expected_one: Vec<u8> = ['T', 'E', 'S', 'T'].iter().map(|chr| *chr as u8).collect();
+        let expected_two: Vec<u8> = ['H', 'E', 'L', 'L', 'O'].iter().map(|chr| *chr as u8).collect();
+        let expected_three = [FEND, FESC];
+
+        let mut data = vec!();
+
+        encode(expected_one.iter().cloned(), &mut data, 0);
+        encode(expected_two.iter().cloned(), &mut data, 0);
+        encode(expected_three.iter().cloned(), &mut data, 0);
+
+        let mut decoded = vec!();
+
+        match decode(&data, &mut decoded) {
+            Some(result) => {
+
+            },
+            None => {
+                assert!(false);
+            }
+        }
+    }
+    */
 }
 
