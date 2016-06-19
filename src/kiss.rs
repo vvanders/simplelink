@@ -1,24 +1,43 @@
+///Implements KISS HLDC framing for communcation with TNCs that implement KISS protocol
 pub mod kiss {
     ///Frame delimiter code, used to represent start and end of frames.
-    const FEND: u8 = 0xC0;
+    pub const FEND: u8 = 0xC0;
 
     ///Frame escape code, used to escape FESC and FEND codes if they are found in byte stream
-    const FESC: u8 = 0xDB;
+    pub const FESC: u8 = 0xDB;
 
     ///Escaped FEND value
-    const TFEND: u8 = 0xDC;
+    pub const TFEND: u8 = 0xDC;
 
     ///Escaped FESC value
-    const TFESC: u8 = 0xDD;
+    pub const TFESC: u8 = 0xDD;
 
-    const CMD_DATA: u8 = 0x00;
+    ///This frame contains data that should be sent out of the TNC. The maximum number of bytes is determined by the amount of memory in the TNC.
+    pub const CMD_DATA: u8 = 0x00;
+    ///The amount of time to wait between keying the transmitter and beginning to send data (in 10 ms units).
     pub const CMD_TX_DELAY: u8 = 0x01;
+    ///The persistence parameter. Persistence=Data*256-1. Used for CSMA.
     pub const CMD_PERSISTENCE: u8 = 0x02;
+    ///Slot time in 10 ms units. Used for CSMA.
     pub const CMD_SLOT_TIME: u8 = 0x03;
+    ///The length of time to keep the transmitter keyed after sending the data (in 10 ms units).
     pub const CMD_TX_TAIL: u8 = 0x04;
+    ///0 means half duplex, anything else means full duplex.
     pub const CMD_DUPLEX: u8 = 0x05;
+    //Exit KISS mode. This applies to all ports.
     pub const CMD_RETURN: u8 = 0xFF;
 
+    /// Encodes a series of bytes into a KISS frame.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use nbplink::kiss::*;
+    ///
+    /// let mut data = vec!();
+    /// kiss::encode(['T', 'E', 'S', 'T'].iter().map(|chr| *chr as u8), &mut data, 0);
+    /// assert!(data == vec!(kiss::FEND, kiss::CMD_DATA, 'T' as u8, 'E' as u8, 'S' as u8, 'T' as u8, kiss::FEND));
+    /// ```
     pub fn encode<T>(data: T, encoded: &mut Vec<u8>, port: u8) where T: Iterator<Item=u8> {
         let (reserved, _) = data.size_hint();
         encoded.reserve(reserved + 3);
@@ -48,6 +67,17 @@ pub mod kiss {
         encoded.push(FEND);
     }
 
+    /// Encodes a command to be sent to the KISS TNC.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use nbplink::kiss::*;
+    /// 
+    /// let mut data = vec!();
+    /// kiss::encode_cmd(&mut data, kiss::CMD_TX_DELAY, 4, 6);
+    /// assert!(data == vec!(kiss::FEND, kiss::CMD_TX_DELAY | 0x60, 0x04, kiss::FEND));
+    /// ```
     pub fn encode_cmd(encoded: &mut Vec<u8>, cmd: u8, data: u8, port: u8) {
         encoded.push(FEND);
 
@@ -64,12 +94,32 @@ pub mod kiss {
         encoded.push(FEND);
     }
 
+    ///Result from a decode operation
     pub struct DecodedFrame {
+        ///Port that this frame was decoded from
         pub port: u8,
+        ///Number of bytes read from the iterator that was passed to decode(). The calling client is responsible for advancing the interator `bytes_read` after the decode operation.
         pub bytes_read: usize
     }
 
-    //@todo: Use a drain iterator here instead so we can remove + process in one pass
+    /// Decode a KISS frame into a series of bytes.
+    ///
+    /// Appends all bytes decoded to decoded. If no KISS frames are found in the iterator then returns `None`.
+    /// Otherwise returns an `Option` of `DecodedFrame`.
+    ///
+    /// ```
+    /// use nbplink::kiss::*;
+    ///
+    /// let data = vec!(kiss::FEND, kiss::CMD_DATA, 0x12, kiss::FEND);
+    /// let mut decoded = vec!();
+    /// match kiss::decode(data.iter().cloned(), &mut decoded) {
+    ///     Some(result) => {
+    ///         assert!(result.bytes_read == 4);
+    ///         assert!(decoded == vec!(0x12));
+    ///     },
+    ///     None => assert!(false)
+    /// }
+    /// ```
     pub fn decode<T>(data: T, decoded: &mut Vec<u8>) -> Option<DecodedFrame> where T: Iterator<Item=u8> {
         let (reserved, _) = data.size_hint();
         decoded.reserve(reserved);
