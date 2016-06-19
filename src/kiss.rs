@@ -215,23 +215,21 @@ pub mod kiss {
         }
     }
 
-    /*
     #[cfg(test)]
-    fn test_decode_single(data: &mut Vec<u8>, expected: [u8]) {
+    fn test_decode_single<T>(data: &mut Vec<u8>, expected: T, port: u8) where T: Iterator<Item=u8> {
         let mut decoded = vec!();
 
-        match decode(&data, &mut decoded) {
+        match decode(data.iter().cloned(), &mut decoded) {
             Some(result) => {
-                assert!(result.port == 5);
-                assert!(result.bytes_read == data.len());
-                assert!(expected == decoded);
+                assert!(result.port == port);
+                assert!(expected.eq(decoded.into_iter()));
 
-                data.
+                //Remove the data so subsequent reads work
+                data.drain(0..result.bytes_read);
             },
             None => assert!(false)
         }
     }
-    */
 
     #[test]
     fn test_encode_decode() {
@@ -263,9 +261,8 @@ pub mod kiss {
         }
     }
 
-    /*
     #[test]
-    fn test_two_frame() {
+    fn test_multi_frame() {
         let expected_one: Vec<u8> = ['T', 'E', 'S', 'T'].iter().map(|chr| *chr as u8).collect();
         let expected_two: Vec<u8> = ['H', 'E', 'L', 'L', 'O'].iter().map(|chr| *chr as u8).collect();
         let expected_three = [FEND, FESC];
@@ -276,17 +273,9 @@ pub mod kiss {
         encode(expected_two.iter().cloned(), &mut data, 0);
         encode(expected_three.iter().cloned(), &mut data, 0);
 
-        let mut decoded = vec!();
-
-        match decode(&data, &mut decoded) {
-            Some(result) => {
-
-            },
-            None => {
-                assert!(false);
-            }
-        }
+        test_decode_single(&mut data, expected_one.iter().cloned(), 0);
+        test_decode_single(&mut data, expected_two.iter().cloned(), 0);
+        test_decode_single(&mut data, expected_three.iter().cloned(), 0);
     }
-    */
 }
 
