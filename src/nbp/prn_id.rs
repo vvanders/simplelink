@@ -8,6 +8,7 @@ pub struct PRN {
     pub callsign: u32
 }
 
+/// Creates new PRN id from an existing callsign
 pub fn new(callsign: [char; 7]) -> Option<PRN> {
     use nbp::address;
 
@@ -20,7 +21,7 @@ pub fn new(callsign: [char; 7]) -> Option<PRN> {
 }
 
 impl PRN {
-    /// Generates a new PRN value from the previous PRN value.
+    /// Generates a new packet id value from the previous packet id.
     pub fn next(&mut self) -> u32 {
         //NBP uses a 4-tap poly in the form of 1 + x^25 + x^26 + x^30 + x^32
         let bit = ((self.current >> (32-25)) ^ (self.current >> (32-26)) ^ (self.current >> (32-30)) ^ (self.current >> (32-32))) & 0x1;
@@ -32,7 +33,7 @@ impl PRN {
         self.current()
     }
 
-    /// Gets the current value of the PRN.
+    /// Gets the current packet id.
     pub fn current(&self) -> u32 {
         self.current ^ self.callsign
     }
