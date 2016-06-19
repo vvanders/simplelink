@@ -5,7 +5,10 @@ const SYMBOL_TABLE: [char; 36] = [
     'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'
 ];
 
-const BROADCAST_ADDRESS: [char; 7] = ['3', 'Z', '1', '4', '1', 'Z', '1'];
+/// Short form broadcast address(usually seen when decoded from the wire)
+pub const BROADCAST_ADDRESS_SHORT: [char; 7] = ['3', 'Z', '1', '4', '1', 'Z', '1'];
+/// Long form broadcast address
+pub const BROADCAST_ADDRESS: [char; 7] = ['*'; 7];
 
 fn symbol_to_character(symbol: u8) -> char {
     SYMBOL_TABLE[symbol as usize]
