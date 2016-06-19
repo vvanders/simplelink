@@ -1,3 +1,5 @@
+//! Encodes address to/from NBP wire format
+
 const SYMBOL_TABLE: [char; 36] = [
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
     'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'
@@ -51,20 +53,35 @@ fn character_to_symbol(character: char) -> Option<u8> {
     }
 }
 
-pub fn encode_address(address: [char; 7]) -> Option<u32> {
+/// Encodes a human readable address into a 32 bit wire format.
+/// NBP uses a modulo-36 encoding supporting up to 7 characters.
+/// Only the values [0-9], [A-Z] are supported.
+///
+/// # Examples
+///
+/// ```
+/// use nbplink::nbp::address;
+///
+/// match address::encode(['S', '5', '3', 'M', 'V', '0', '0']) {
+///     Some(value) => assert!(value == 53098624),
+///     None => assert!(false)
+/// }
+/// 
+/// ```
+pub fn encode(address: [char; 7]) -> Option<u32> {
     //Special broadcast address
     if address == ['*'; 7] || address == BROADCAST_ADDRESS {
         Some(0xFFFFFFFF)
     } else {
-        encode_address_rec(address, 0)
+        encode_rec(address, 0)
     }
 }
 
-fn encode_address_rec(address: [char; 7], offset: usize) -> Option<u32> {
+fn encode_rec(address: [char; 7], offset: usize) -> Option<u32> {
     if offset == 6 {
         character_to_symbol(address[6]).map(|x| x as u32)
     } else {
-        return encode_address_rec(address, offset + 1).and_then(|sub| {
+        return encode_rec(address, offset + 1).and_then(|sub| {
             character_to_symbol(address[offset]).map(|sym| {
                 println!("{:?} {:?} {:?} {:?}", sub * 36 + sym as u32, sub, sym, offset);
                 sub * 36 + sym as u32
@@ -73,7 +90,16 @@ fn encode_address_rec(address: [char; 7], offset: usize) -> Option<u32> {
     }
 }
 
-pub fn decode_address(address: u32) -> [char; 7] {
+/// Decodes an address from wire format into a human readable character array.
+///
+/// # Examples
+///
+/// ```
+/// use nbplink::nbp::address;
+///
+/// assert!(address::decode(53098624) == ['S', '5', '3', 'M', 'V', '0', '0']);
+/// ```
+pub fn decode(address: u32) -> [char; 7] {
     (0..7).fold((['0'; 7], address), |(mut addr, remainder), i| {
         addr[i] = symbol_to_character((remainder % 36) as u8);
 
@@ -83,17 +109,17 @@ pub fn decode_address(address: u32) -> [char; 7] {
 
 #[test]
 fn encode_test() {
-    match encode_address(['1', '0', '0', '0', '0', '0', '0']) {
+    match encode(['1', '0', '0', '0', '0', '0', '0']) {
         Some(value) => assert!(value == 1),
         None => assert!(false)
     }
 
-    match encode_address(['1', '1', '0', '0', '0', '0', '0']) {
+    match encode(['1', '1', '0', '0', '0', '0', '0']) {
         Some(value) => assert!(value == 37),
         None => assert!(false)
     }
 
-    match encode_address(['S', '5', '3', 'M', 'V', '0', '0']) {
+    match encode(['S', '5', '3', 'M', 'V', '0', '0']) {
         Some(value) => assert!(value == 53098624),
         None => assert!(false)
     }
@@ -101,9 +127,9 @@ fn encode_test() {
 
 #[test]
 fn decode_test() {
-    assert!(decode_address(1) == ['1', '0', '0', '0', '0', '0', '0']);
-    assert!(decode_address(37) == ['1', '1', '0', '0', '0', '0', '0']);
-    assert!(decode_address(53098624) == ['S', '5', '3', 'M', 'V', '0', '0']);
+    assert!(decode(1) == ['1', '0', '0', '0', '0', '0', '0']);
+    assert!(decode(37) == ['1', '1', '0', '0', '0', '0', '0']);
+    assert!(decode(53098624) == ['S', '5', '3', 'M', 'V', '0', '0']);
 }
 
 #[test]
@@ -112,7 +138,7 @@ fn encode_decode_test() {
     let addr2 = ['1', '1', '0', '0', '0', '0', '0'];
     let addr3 = ['1', '0', '0', '0', '0', '0', '0'];
 
-    assert!(decode_address(encode_address(addr1).unwrap_or(0)) == addr1);
-    assert!(decode_address(encode_address(addr2).unwrap_or(0)) == addr2);
-    assert!(decode_address(encode_address(addr3).unwrap_or(0)) == addr3);
+    assert!(decode(encode(addr1).unwrap_or(0)) == addr1);
+    assert!(decode(encode(addr2).unwrap_or(0)) == addr2);
+    assert!(decode(encode(addr3).unwrap_or(0)) == addr3);
 }
