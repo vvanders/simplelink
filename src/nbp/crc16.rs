@@ -2,7 +2,9 @@
 
 const CRC_POLY: u16 = 0x1021;
 
-///! Calculate a CRC on an iterator of data.
+pub type CRC = u16;
+
+/// Calculate a CRC on an iterator of data.
 ///
 /// # Examples
 /// ```
@@ -28,15 +30,31 @@ const CRC_POLY: u16 = 0x1021;
 /// //Different CRC
 /// assert!(crc != crc16::calc(data.iter().cloned()));
 /// ```
-pub fn calc<T>(data: T) -> u16 where T: Iterator<Item=u8> {
-    let crc = data.fold(0xFFFF, |calc, byte| {
-        update(byte, calc)
+pub fn calc<T>(data: T) -> CRC where T: Iterator<Item=u8> {
+    let crc = data.fold(new(), |calc, byte| {
+        update_u8(byte, calc)
     });
 
-    append_zero(crc)
+    finish(crc)
 }
 
-fn update(byte: u8, mut crc: u16) -> u16 {
+/// Create a new CRC value
+pub fn new() -> CRC {
+    0xFFFF
+}
+
+/// Process 32 bits of data for CRC
+pub fn update_u32(mut int: u32, mut crc: CRC) -> CRC {
+    for _ in 0..4 {
+        crc = update_u8(int as u8, crc);
+        int >>= 8;
+    }
+
+    crc
+}
+
+/// Process 8 bits of data for CRC
+pub fn update_u8(byte: u8, mut crc: CRC) -> CRC {
     let mut bit = 0x80; //Highest bit of 8-bit value;
 
     for _ in 0..8 {
@@ -58,7 +76,9 @@ fn update(byte: u8, mut crc: u16) -> u16 {
     crc
 }
 
-fn append_zero(mut crc: u16) -> u16 {
+
+/// Finish calculating a CRC
+pub fn finish(mut crc: CRC) -> CRC {
     for _ in 0..16 {
         let xor_flag = crc & 0x8000 == 0x8000;
 
