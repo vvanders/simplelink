@@ -2,17 +2,17 @@
 use std::io;
 use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian};
 use nbp::crc16;
+use nbp::prn_id;
 
 pub const MTU: usize = 1500;
 
 /// Represents a single NBP Ack Frame
+#[derive(Copy,Clone)]
 pub struct AckFrame {
     /// Psuedo-Random unique identifier that this packet is an ack for.
     pub prn: u32,
     /// Source station that acknowledged the packet.
-    pub src_addr: u32,
-    /// CRC to verify integrity.
-    pub crc: u16
+    pub src_addr: u32
 }
 
 /// Represents a single NBP Data Frame
@@ -20,13 +20,23 @@ pub struct DataFrame {
     /// Psuedo-Random unique identifier for this packet. This is combination of PRN + XOR of callsign.
     pub prn: u32,
     /// Forward and return address routing. Each path can contain up to 16 addresses plus a single separator.
-    pub address_route: [u32; 33],
+    pub address_route: [u32; 17],
     /// Payload data. MTU is 1500 so stop there
     pub payload: [u8; MTU],
     /// Payload size
-    pub payload_size: usize,
-    /// CRC to verify integrity.
-    pub crc: u16
+    pub payload_size: usize
+}
+
+//Work around the fact that arrays with > 32 elements can't be cloned yet
+impl Clone for DataFrame {
+    fn clone(&self) -> DataFrame {
+        DataFrame {
+            prn: self.prn,
+            address_route: self.address_route,
+            payload: self.payload,
+            payload_size: self.payload_size
+        }
+    }
 }
 
 /// All possible NBP frames
@@ -36,6 +46,7 @@ pub enum Frame {
 }
 
 /// Error cases for converting from raw bytes to a frame.
+#[derive(Debug)]
 pub enum ReadError {
     /// IO error occured while reading.
     IO(io::Error),
@@ -47,10 +58,56 @@ pub enum ReadError {
     CRCFailure
 }
 
+/// Error cases for encoding a packet
+#[derive(Debug)]
+pub enum EncodeError {
+    /// Data packet was more than 1500 bytes
+    Truncated
+}
+
 /// Error cases for converting from a frame to raw bytes.
+#[derive(Debug)]
 pub enum WriteError {
     /// IO error occured while writing.
     IO(io::Error)
+}
+
+/// Constructs a new ACK frame
+pub fn new_ack(prn: u32, src_addr: u32) -> AckFrame {
+    AckFrame {
+        prn: prn,
+        src_addr: src_addr
+    }
+}
+
+/// Constructs a new data frame
+pub fn new_data<T>(prn: &mut prn_id::PRN, dest: [u32; 16], data: T) -> Result<DataFrame, EncodeError> where T: Iterator<Item=u8> {
+    let mut addr: [u32; 17] = [0; 17];
+    let mut payload: [u8; MTU] = [0; MTU];
+
+    for i in 0..15 {
+        addr[i] = dest[i];
+    }
+
+    let payload_size = data.fold(0, |count, byte| {
+        if count < payload.len() {
+            payload[count] = byte;
+        }
+
+        count + 1
+    });
+
+    //We truncate at 1500 bytes
+    if payload_size > MTU {
+        return Err(EncodeError::Truncated)
+    }
+
+    Ok(DataFrame {
+        prn: prn.next(),
+        address_route: addr,
+        payload: payload,
+        payload_size: payload_size
+    })
 }
 
 fn read_u32<T>(bytes: &mut T, crc: &mut crc16::CRC) -> Result<u32, ReadError> where T: io::Read {
@@ -73,16 +130,15 @@ pub fn from_bytes<T>(bytes: &mut T, size: usize) -> Result<Frame, ReadError> whe
 
         Frame::Ack(AckFrame {
             prn: prn,
-            src_addr: addr,
-            crc: crc
+            src_addr: addr
         })
     } else {
         //Scan in our address. We're looking for u32+, 0x0, u32+, 0x0.
         let mut addr_marker = 0;
-        let mut addr = [0; 33];
+        let mut addr = [0; 17];
         let mut addr_len = 0;
 
-        for _ in 0..34 {
+        for _ in 0..18 {
             let value = try!(read_u32(bytes, &mut crc));
 
             if value == 0 {
@@ -97,8 +153,8 @@ pub fn from_bytes<T>(bytes: &mut T, size: usize) -> Result<Frame, ReadError> whe
             }
         }
 
-        //If we saw 33 values that means that the 34th one must be a 0x0 separator, otherwise this is malformed
-        if addr_len == 33 && addr_marker != 2 {
+        //If we saw 17 values that means that the 18th one must be a 0x0 separator, otherwise this is malformed
+        if addr_len == 17 && addr_marker != 2 {
             let value = try!(read_u32(bytes, &mut crc));
             addr_len += 1;
 
@@ -108,13 +164,13 @@ pub fn from_bytes<T>(bytes: &mut T, size: usize) -> Result<Frame, ReadError> whe
         }
 
         //size - (PRN + ADDR size + CRC)
-        let payload_size = size - (4 + addr_len * 4 - 2);
+        let payload_size = size - (4 + addr_len * 4 + 2);
 
         let mut payload = [0; 1500];
         try!(bytes.read(&mut payload[..payload_size]).map_err(|e| ReadError::IO(e)));
 
         //Update CRC
-        crc = payload.iter().fold(crc, |crc, byte| {
+        crc = payload[..payload_size].iter().fold(crc, |crc, byte| {
             crc16::update_u8(*byte, crc)
         });
 
@@ -122,8 +178,7 @@ pub fn from_bytes<T>(bytes: &mut T, size: usize) -> Result<Frame, ReadError> whe
             prn: prn,
             address_route: addr,
             payload: payload,
-            payload_size: payload_size,
-            crc: crc
+            payload_size: payload_size
         })
     };
 
@@ -131,6 +186,8 @@ pub fn from_bytes<T>(bytes: &mut T, size: usize) -> Result<Frame, ReadError> whe
 
     //Validate our CRC
     let frame_crc = try!(bytes.read_u16::<BigEndian>().map_err(|e| ReadError::IO(e)));
+
+    println!("readcrc {} {}", crc, frame_crc);
 
     if frame_crc != crc {
         return Err(ReadError::CRCFailure)
@@ -190,7 +247,7 @@ pub fn to_bytes<T>(bytes: &mut T, frame: &Frame) -> Result<usize, WriteError> wh
             //Start with PRN
             size += try!(write_u32(ack_frame.prn, bytes, &mut crc));
 
-            //Only include this stations callsign since we need that to comply with FCC Part 97. If our last trasmission is an ACK it must include our callsign
+            //Only include this station's callsign since we need that to comply with FCC Part 97. If our last trasmission is an ACK it must include our callsign
             size += try!(write_u32(ack_frame.src_addr, bytes, &mut crc));
         }
     }
@@ -202,4 +259,59 @@ pub fn to_bytes<T>(bytes: &mut T, frame: &Frame) -> Result<usize, WriteError> wh
     size += 2;
 
     Ok(size)
+}
+
+#[test]
+fn serialize_ack_test() {
+    use std::io::Cursor;
+
+    let mut prn = prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
+    let ack = new_ack(prn.next(), prn.callsign);
+
+    let mut data = vec!();
+
+    let count = to_bytes(&mut data, &Frame::Ack(ack.clone())).unwrap();
+    assert!(count == 4 + 4 + 2);
+
+    let mut reader = Cursor::new(data);
+    match from_bytes(&mut reader, count).unwrap() {
+        Frame::Ack(read_ack) => {
+            assert!(read_ack.prn == ack.prn);
+            assert!(read_ack.src_addr == ack.src_addr);
+        }
+        _ => assert!(false)
+    }
+}
+
+#[test]
+fn serialize_data_test() {
+    use std::io::Cursor;
+    use nbp::address;
+
+    let mut prn = prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
+    let packet = [1, 2, 3, 4, 5];
+    let dest_addr = address::encode(['K', 'F', '7', 'S', 'J', 'K', '0']).unwrap();
+    let src_addr = address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
+    let route = [dest_addr, 0, src_addr, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+    let data_packet = new_data(&mut prn, route, packet.iter().cloned()).unwrap();
+
+    let mut data = vec!();
+
+    let count = to_bytes(&mut data, &Frame::Data(data_packet.clone())).unwrap();
+    assert!(count == 4 + 4*4 + 5 + 2);
+
+    let mut reader = Cursor::new(data);
+    match from_bytes(&mut reader, count).unwrap() {
+        Frame::Data(read_data) => {
+            assert!(read_data.payload_size == 5);
+            for i in 0..5 {
+                assert!(read_data.payload[i] == (i+1) as u8);
+            }
+            assert!(read_data.address_route[0] == dest_addr);
+            assert!(read_data.address_route[1] == 0x0);
+            assert!(read_data.address_route[2] == src_addr);
+        },
+        _ => assert!(false)
+    }
 }

@@ -86,7 +86,6 @@ fn encode_rec(address: [char; 7], offset: usize) -> Option<u32> {
     } else {
         return encode_rec(address, offset + 1).and_then(|sub| {
             character_to_symbol(address[offset]).map(|sym| {
-                println!("{:?} {:?} {:?} {:?}", sub * 36 + sym as u32, sub, sym, offset);
                 sub * 36 + sym as u32
             })
         })
