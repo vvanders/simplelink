@@ -1,8 +1,10 @@
 //! NBP Frame management
 use std::io;
+use std::iter;
 use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian};
 use nbp::crc16;
 use nbp::prn_id;
+use nbp::routing;
 
 pub const MTU: usize = 1500;
 
@@ -62,7 +64,9 @@ pub enum ReadError {
 #[derive(Debug)]
 pub enum EncodeError {
     /// Data packet was more than 1500 bytes
-    Truncated
+    Truncated,
+    /// Dest address was more than 15 stations
+    AddressTooLong
 }
 
 /// Error cases for converting from a frame to raw bytes.
@@ -81,12 +85,23 @@ pub fn new_ack(prn: u32, src_addr: u32) -> AckFrame {
 }
 
 /// Constructs a new data frame
-pub fn new_data<T>(prn: &mut prn_id::PRN, dest: [u32; 16], data: T) -> Result<DataFrame, EncodeError> where T: Iterator<Item=u8> {
+pub fn new_data<T>(prn: &mut prn_id::PRN, dest: &[u32], data: T) -> Result<DataFrame, EncodeError> where T: Iterator<Item=u8> {
     let mut addr: [u32; 17] = [0; 17];
     let mut payload: [u8; MTU] = [0; MTU];
 
-    for i in 0..15 {
-        addr[i] = dest[i];
+    if dest.len() > 15 {
+        return Err(EncodeError::AddressTooLong)
+    }
+
+    let formatted_addr = dest.iter().cloned()
+        .rev()
+        .chain(iter::once(routing::ADDRESS_SEPARATOR)) //Add separator
+        .chain(iter::once(prn.callsign)) //Add origin station
+        .enumerate();
+
+    //Reverse our addresses since we go 5,4,3,2,1, SEP, source
+    for (i, dest_addr) in formatted_addr {
+        addr[i] = dest_addr;
     }
 
     let payload_size = data.fold(0, |count, byte| {
@@ -141,7 +156,7 @@ pub fn from_bytes<T>(bytes: &mut T, size: usize) -> Result<Frame, ReadError> whe
         for _ in 0..18 {
             let value = try!(read_u32(bytes, &mut crc));
 
-            if value == 0 {
+            if value == routing::ADDRESS_SEPARATOR {
                 addr_marker += 1;
             }
 
@@ -187,8 +202,6 @@ pub fn from_bytes<T>(bytes: &mut T, size: usize) -> Result<Frame, ReadError> whe
     //Validate our CRC
     let frame_crc = try!(bytes.read_u16::<BigEndian>().map_err(|e| ReadError::IO(e)));
 
-    println!("readcrc {} {}", crc, frame_crc);
-
     if frame_crc != crc {
         return Err(ReadError::CRCFailure)
     }
@@ -216,7 +229,7 @@ pub fn to_bytes<T>(bytes: &mut T, frame: &Frame) -> Result<usize, WriteError> wh
             //Address follows, it's in for format of <source>, 0x0, <dest>, 0x0
             let mut delim_count = 0;
             for addr in data_frame.address_route.iter() {
-                if *addr == 0x0 {
+                if *addr == routing::ADDRESS_SEPARATOR {
                     delim_count += 1;
                 }
 
@@ -230,7 +243,7 @@ pub fn to_bytes<T>(bytes: &mut T, frame: &Frame) -> Result<usize, WriteError> wh
 
             //If we only saw one delimiter then we need to manually include the trailing one
             if delim_count == 1 {
-                size += try!(write_u32(0x0, bytes, &mut crc));
+                size += try!(write_u32(routing::ADDRESS_SEPARATOR, bytes, &mut crc));
             }
 
             //Handle the actual payload
@@ -283,35 +296,72 @@ fn serialize_ack_test() {
     }
 }
 
-#[test]
-fn serialize_data_test() {
+#[cfg(test)]
+fn serialize_deserialize_packet(dest: &[u32], payload: &[u8]) {
     use std::io::Cursor;
     use nbp::address;
 
     let mut prn = prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
-    let packet = [1, 2, 3, 4, 5];
-    let dest_addr = address::encode(['K', 'F', '7', 'S', 'J', 'K', '0']).unwrap();
     let src_addr = address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
-    let route = [dest_addr, 0, src_addr, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-    let data_packet = new_data(&mut prn, route, packet.iter().cloned()).unwrap();
+    let data_packet = new_data(&mut prn, dest, payload.iter().cloned()).unwrap();
 
     let mut data = vec!();
 
     let count = to_bytes(&mut data, &Frame::Data(data_packet.clone())).unwrap();
-    assert!(count == 4 + 4*4 + 5 + 2);
+    assert!(count == 4 + 4 * (3 + dest.len()) + payload.len() + 2);
 
     let mut reader = Cursor::new(data);
     match from_bytes(&mut reader, count).unwrap() {
         Frame::Data(read_data) => {
             assert!(read_data.payload_size == 5);
-            for i in 0..5 {
-                assert!(read_data.payload[i] == (i+1) as u8);
+            for (i, byte) in payload.iter().cloned().enumerate() {
+                assert!(read_data.payload[i] == byte);
             }
-            assert!(read_data.address_route[0] == dest_addr);
-            assert!(read_data.address_route[1] == 0x0);
-            assert!(read_data.address_route[2] == src_addr);
+
+            for (i, test_addr) in dest.iter().rev().cloned().enumerate() {
+                assert!(read_data.address_route[i] == test_addr);
+            }
+            assert!(read_data.address_route[dest.len()] == routing::ADDRESS_SEPARATOR);
+            assert!(read_data.address_route[dest.len()+1] == src_addr);
         },
         _ => assert!(false)
     }
+}
+
+#[test]
+fn serialize_data_test() {
+    use nbp::address;
+
+    let dest_addr = address::encode(['K', 'F', '7', 'S', 'J', 'K', '0']).unwrap();
+    let packet = [1, 2, 3, 4, 5];
+
+    serialize_deserialize_packet(&[dest_addr], &packet);
+}
+
+#[test]
+fn test_addr_permuatations() {
+    use nbp::address;
+
+    for size in 1..15 {
+        //Build address
+        let addr: Vec<u32> = (0..size).into_iter()
+            .map(|i| {
+                if i > 9 {
+                    ['T', 'E', 'S', 'T', address::symbol_to_character(i / 10), address::symbol_to_character(i % 10), '0']
+                } else {
+                    ['T', 'E', 'S', 'T', address::symbol_to_character(i), '0', '0']
+                }
+            })
+            .filter_map(|addr| address::encode(addr))
+            .collect();
+
+        let packet = [1, 2, 3, 4, 5];
+        serialize_deserialize_packet(&addr, &packet);
+    }
+}
+
+#[test]
+fn test_payload_permutations() {
+
 }

@@ -10,11 +10,14 @@ pub const BROADCAST_ADDRESS_SHORT: [char; 7] = ['3', 'Z', '1', '4', '1', 'Z', '1
 /// Long form broadcast address
 pub const BROADCAST_ADDRESS: [char; 7] = ['*'; 7];
 
-fn symbol_to_character(symbol: u8) -> char {
+
+/// Converts a character value to a numeric value
+pub fn symbol_to_character(symbol: u8) -> char {
     SYMBOL_TABLE[symbol as usize]
 }
 
-fn character_to_symbol(character: char) -> Option<u8> {
+/// Converts a numeric value to a character value
+pub fn character_to_symbol(character: char) -> Option<u8> {
     match character {
         '0' => Some(0),
         '1' => Some(1),
