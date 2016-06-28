@@ -3,3 +3,4 @@ extern crate byteorder;
 
 pub mod kiss;
 pub mod nbp;
+pub mod util;
