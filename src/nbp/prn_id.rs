@@ -1,6 +1,6 @@
-//! Psuedo-Random number generator for packet identification
+//! Pseudo-Random number generator for packet identification
 
-/// Psuedo-Random packet id generation
+/// Pseudo-Random packet id generation
 pub struct PRN {
     /// Current PRN value
     pub current: u32,

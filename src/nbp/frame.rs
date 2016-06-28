@@ -10,7 +10,7 @@ pub const MTU: usize = 1500;
 /// Represents a single NBP Ack Frame
 #[derive(Copy,Clone)]
 pub struct AckFrame {
-    /// Psuedo-Random unique identifier that this packet is an ack for.
+    /// Pseudo-Random unique identifier that this packet is an ack for.
     pub prn: u32,
     /// Source station that acknowledged the packet.
     pub src_addr: u32
@@ -18,7 +18,7 @@ pub struct AckFrame {
 
 /// Represents a single NBP Data Frame
 pub struct DataFrame {
-    /// Psuedo-Random unique identifier for this packet. This is combination of PRN + XOR of callsign.
+    /// Pseudo-Random unique identifier for this packet. This is combination of PRN + XOR of callsign.
     pub prn: u32,
     /// Forward and return address routing. Each path can contain up to 16 addresses plus a single separator.
     pub address_route: [u32; 17],
