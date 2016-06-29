@@ -137,6 +137,7 @@ fn read_u32<T>(bytes: &mut T, crc: &mut crc16::CRC) -> Result<u32, ReadError> wh
 /// Read in a frame from a series of bytes.
 pub fn from_bytes<T>(bytes: &mut T, size: usize) -> Result<Frame, ReadError> where T: io::Read {
     let mut crc = crc16::new();
+    let mut err = None;
 
     //All frames start with PRN
     let prn = try!(read_u32(bytes, &mut crc));
@@ -155,7 +156,7 @@ pub fn from_bytes<T>(bytes: &mut T, size: usize) -> Result<Frame, ReadError> whe
         let mut addr = [0; 17];
         let mut addr_len = 0;
 
-        for _ in 0..18 {
+        for _ in 0..17 {
             let value = try!(read_u32(bytes, &mut crc));
 
             if value == routing::ADDRESS_SEPARATOR {
@@ -176,7 +177,7 @@ pub fn from_bytes<T>(bytes: &mut T, size: usize) -> Result<Frame, ReadError> whe
             addr_len += 1;
 
             if value != 0 {
-                return Err(ReadError::BadAddress)
+                err = Some(ReadError::BadAddress);
             }
         }
 
@@ -205,10 +206,11 @@ pub fn from_bytes<T>(bytes: &mut T, size: usize) -> Result<Frame, ReadError> whe
     let frame_crc = try!(bytes.read_u16::<BigEndian>().map_err(|e| ReadError::IO(e)));
 
     if frame_crc != crc {
-        return Err(ReadError::CRCFailure)
+        err = Some(ReadError::CRCFailure);
     }
 
-    Ok(frame)
+    err.map(|err| Err(err))
+        .unwrap_or(Ok(frame))
 }
 
 fn write_u32<T>(value: u32, bytes: &mut T, crc: &mut crc16::CRC) -> Result<usize, WriteError> where T: io::Write {
@@ -302,9 +304,7 @@ fn serialize_ack_test() {
 use std::iter;
 
 #[cfg(test)]
-fn serialize_deserialize_packet(dest: &[u32], payload: &[u8]) {
-    use std::io::Cursor;
-
+fn serialize_packet(dest: &[u32], payload: &[u8]) -> Vec<u8> {
     let mut prn = prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
     let data_packet = new_data(&mut prn, dest, payload.iter().cloned()).unwrap();
 
@@ -312,6 +312,16 @@ fn serialize_deserialize_packet(dest: &[u32], payload: &[u8]) {
 
     let count = to_bytes(&mut data, &Frame::Data(data_packet.clone())).unwrap();
     assert!(count == 4 + 4 * (1 + dest.len()) + payload.len() + 2);
+
+    data
+}
+
+#[cfg(test)]
+fn serialize_deserialize_packet(dest: &[u32], payload: &[u8]) {
+    use std::io::Cursor;
+
+    let data = serialize_packet(dest, payload);
+    let count = data.len();
 
     let mut reader = Cursor::new(data);
     match from_bytes(&mut reader, count).unwrap() {
@@ -395,5 +405,47 @@ fn test_payload_permutations() {
             .collect();
 
         serialize_deserialize_packet(&addr, &packet);
+    }
+}
+
+#[test]
+fn test_corrupt_bit() {
+    use nbp::address;
+    use std::io::Cursor;
+
+    let dest_addr = address::encode(['K', 'F', '7', 'S', 'J', 'K', '0']).unwrap();
+    let src_addr = address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
+
+    let addr: Vec<u32> = iter::once(dest_addr)
+        .chain(iter::once(routing::ADDRESS_SEPARATOR))
+        .chain(iter::once(src_addr))
+        .collect();
+
+    let packet: Vec<u8> = (0..256).into_iter()
+        .map(|value| value as u8)
+        .collect();
+
+    let mut data = serialize_packet(&addr, &packet);
+
+    for byte in 0..256 {
+        for bit in 0..7 {
+            //Mutate a bit
+            let mask = (1 as u8) << bit;
+            data[byte] ^= mask;
+
+            //Validate that we get a CRC error
+            let count = data.len();
+
+            {
+                let mut reader = Cursor::new(&data);
+                match from_bytes(&mut reader, count) {
+                    Err(ReadError::CRCFailure) => (),
+                    _ => assert!(false)
+                }
+            }
+
+            //Restore the bit for the next run
+            data[byte] ^= mask;
+        }
     }
 }
