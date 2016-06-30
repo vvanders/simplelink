@@ -434,9 +434,8 @@ fn test_corrupt_bit() {
             data[byte] ^= mask;
 
             //Validate that we get a CRC error
-            let count = data.len();
-
             {
+                let count = data.len();
                 let mut reader = Cursor::new(&data);
                 match from_bytes(&mut reader, count) {
                     Err(ReadError::CRCFailure) => (),
