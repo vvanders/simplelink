@@ -9,7 +9,7 @@ pub const MTU: usize = 1500;
 
 /// Represents a single NBP Ack Frame
 #[derive(Copy,Clone)]
-pub struct AckFrame {
+pub struct AckHeader {
     /// Pseudo-Random unique identifier that this packet is an ack for.
     pub prn: u32,
     /// Source station that acknowledged the packet.
@@ -17,33 +17,21 @@ pub struct AckFrame {
 }
 
 /// Represents a single NBP Data Frame
-pub struct DataFrame {
+#[derive(Copy,Clone)]
+pub struct DataHeader {
     /// Pseudo-Random unique identifier for this packet. This is combination of PRN + XOR of callsign.
     pub prn: u32,
     /// Forward and return address routing. Each path can contain up to 16 addresses plus a single separator.
     pub address_route: [u32; 17],
-    /// Payload data. MTU is 1500 so stop there
-    pub payload: [u8; MTU],
-    /// Payload size
+    /// Size of the payload 
     pub payload_size: usize
 }
 
-//Work around the fact that arrays with > 32 elements can't be cloned yet
-impl Clone for DataFrame {
-    fn clone(&self) -> DataFrame {
-        DataFrame {
-            prn: self.prn,
-            address_route: self.address_route,
-            payload: self.payload,
-            payload_size: self.payload_size
-        }
-    }
-}
-
 /// All possible NBP frames
+#[derive(Copy,Clone)]
 pub enum Frame {
-    Data(DataFrame),
-    Ack(AckFrame)
+    Data(DataHeader),
+    Ack(AckHeader)
 }
 
 /// Error cases for converting from raw bytes to a frame.
@@ -78,17 +66,16 @@ pub enum WriteError {
 }
 
 /// Constructs a new ACK frame
-pub fn new_ack(prn: u32, src_addr: u32) -> AckFrame {
-    AckFrame {
+pub fn new_ack(prn: u32, src_addr: u32) -> AckHeader {
+    AckHeader {
         prn: prn,
         src_addr: src_addr
     }
 }
 
 /// Constructs a new data frame
-pub fn new_data<T>(prn: &mut prn_id::PRN, dest: &[u32], data: T) -> Result<DataFrame, EncodeError> where T: Iterator<Item=u8> {
+pub fn new_data(prn: &mut prn_id::PRN, dest: &[u32], payload_size: usize) -> Result<DataHeader, EncodeError> {
     let mut addr: [u32; 17] = [0; 17];
-    let mut payload: [u8; MTU] = [0; MTU];
 
     if dest.len() > 17 {
         return Err(EncodeError::AddressTooLong)
@@ -106,23 +93,13 @@ pub fn new_data<T>(prn: &mut prn_id::PRN, dest: &[u32], data: T) -> Result<DataF
         return Err(EncodeError::AddressSeparatorNotFound)
     }
 
-    let payload_size = data.fold(0, |count, byte| {
-        if count < payload.len() {
-            payload[count] = byte;
-        }
-
-        count + 1
-    });
-
-    //We truncate at 1500 bytes
     if payload_size > MTU {
         return Err(EncodeError::Truncated)
     }
 
-    Ok(DataFrame {
+    Ok(DataHeader {
         prn: prn.next(),
         address_route: addr,
-        payload: payload,
         payload_size: payload_size
     })
 }
@@ -135,7 +112,7 @@ fn read_u32<T>(bytes: &mut T, crc: &mut crc16::CRC) -> Result<u32, ReadError> wh
 }
 
 /// Read in a frame from a series of bytes.
-pub fn from_bytes<T>(bytes: &mut T, size: usize) -> Result<Frame, ReadError> where T: io::Read {
+pub fn from_bytes<T>(bytes: &mut T, out_payload: &mut [u8], size: usize) -> Result<Frame, ReadError> where T: io::Read {
     let mut crc = crc16::new();
     let mut err = None;
 
@@ -146,7 +123,7 @@ pub fn from_bytes<T>(bytes: &mut T, size: usize) -> Result<Frame, ReadError> whe
     let frame = if size == 4 + 4 + 2 {
         let addr = try!(read_u32(bytes, &mut crc));
 
-        Frame::Ack(AckFrame {
+        Frame::Ack(AckHeader {
             prn: prn,
             src_addr: addr
         })
@@ -184,18 +161,21 @@ pub fn from_bytes<T>(bytes: &mut T, size: usize) -> Result<Frame, ReadError> whe
         //size - (PRN + ADDR size + CRC)
         let payload_size = size - (4 + addr_len * 4 + 2);
 
-        let mut payload = [0; 1500];
-        try!(bytes.read(&mut payload[..payload_size]).map_err(|e| ReadError::IO(e)));
+        if payload_size > out_payload.len() {
+            err = Some(ReadError::Truncated);
+        }
+
+        use std::io::Read;
+        try!(bytes.take(payload_size as u64).read(out_payload).map_err(|e| ReadError::IO(e)));
 
         //Update CRC
-        crc = payload[..payload_size].iter().fold(crc, |crc, byte| {
+        crc = out_payload[..payload_size].iter().fold(crc, |crc, byte| {
             crc16::update_u8(*byte, crc)
         });
 
-        Frame::Data(DataFrame{
+        Frame::Data(DataHeader{
             prn: prn,
             address_route: addr,
-            payload: payload,
             payload_size: payload_size
         })
     };
@@ -221,7 +201,7 @@ fn write_u32<T>(value: u32, bytes: &mut T, crc: &mut crc16::CRC) -> Result<usize
 }
 
 /// Convert a frame to a series of bytes.
-pub fn to_bytes<T>(bytes: &mut T, frame: &Frame) -> Result<usize, WriteError> where T: io::Write {
+pub fn to_bytes<T>(bytes: &mut T, frame: &Frame, payload: Option<&[u8]>) -> Result<usize, WriteError> where T: io::Write {
     let mut crc = crc16::new();
     let mut size = 0;
 
@@ -251,13 +231,16 @@ pub fn to_bytes<T>(bytes: &mut T, frame: &Frame) -> Result<usize, WriteError> wh
             }
 
             //Handle the actual payload
-            let final_payload = &data_frame.payload[..data_frame.payload_size];
+            match payload {
+                Some(data) => {
+                    try!(bytes.write(data).map_err(|e| WriteError::IO(e)));
+                    size += data_frame.payload_size;
 
-            try!(bytes.write(final_payload).map_err(|e| WriteError::IO(e)));
-            size += data_frame.payload_size;
-
-            for byte in final_payload {
-                crc = crc16::update_u8(*byte, crc);
+                    for byte in data {
+                        crc = crc16::update_u8(*byte, crc);
+                    }
+                },
+                None => ()
             }
         },
         &Frame::Ack(ref ack_frame) => {
@@ -287,11 +270,12 @@ fn serialize_ack_test() {
 
     let mut data = vec!();
 
-    let count = to_bytes(&mut data, &Frame::Ack(ack.clone())).unwrap();
+    let count = to_bytes(&mut data, &Frame::Ack(ack.clone()), None).unwrap();
     assert!(count == 4 + 4 + 2);
 
     let mut reader = Cursor::new(data);
-    match from_bytes(&mut reader, count).unwrap() {
+    let mut payload = [0; MTU];
+    match from_bytes(&mut reader, &mut payload, count).unwrap() {
         Frame::Ack(read_ack) => {
             assert!(read_ack.prn == ack.prn);
             assert!(read_ack.src_addr == ack.src_addr);
@@ -306,11 +290,11 @@ use std::iter;
 #[cfg(test)]
 fn serialize_packet(dest: &[u32], payload: &[u8]) -> Vec<u8> {
     let mut prn = prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
-    let data_packet = new_data(&mut prn, dest, payload.iter().cloned()).unwrap();
+    let data_packet = new_data(&mut prn, dest, payload.len()).unwrap();
 
     let mut data = vec!();
 
-    let count = to_bytes(&mut data, &Frame::Data(data_packet.clone())).unwrap();
+    let count = to_bytes(&mut data, &Frame::Data(data_packet.clone()), Some(payload)).unwrap();
     assert!(count == 4 + 4 * (1 + dest.len()) + payload.len() + 2);
 
     data
@@ -324,11 +308,12 @@ fn serialize_deserialize_packet(dest: &[u32], payload: &[u8]) {
     let count = data.len();
 
     let mut reader = Cursor::new(data);
-    match from_bytes(&mut reader, count).unwrap() {
+    let mut read_payload = [0; MTU];
+    match from_bytes(&mut reader, &mut read_payload, count).unwrap() {
         Frame::Data(read_data) => {
             assert!(read_data.payload_size == payload.len());
             for (i, byte) in payload.iter().cloned().enumerate() {
-                assert!(read_data.payload[i] == byte);
+                assert!(read_payload[i] == byte);
             }
 
             for (i, test_addr) in dest.iter().cloned().enumerate() {
@@ -437,7 +422,8 @@ fn test_corrupt_bit() {
             {
                 let count = data.len();
                 let mut reader = Cursor::new(&data);
-                match from_bytes(&mut reader, count) {
+                let mut payload = [0; MTU];
+                match from_bytes(&mut reader, &mut payload, count) {
                     Err(ReadError::CRCFailure) => (),
                     _ => assert!(false)
                 }

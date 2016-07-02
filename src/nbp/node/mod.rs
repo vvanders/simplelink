@@ -51,7 +51,7 @@ impl Node {
     }
 
     /// Ticks any packet retries that need to be sent
-    pub fn tick<T>(&mut self, tx_drain: T, elapsed_ms: usize) -> io::Result<()> 
+    pub fn tick<T>(&mut self, tx_drain: T, elapsed_ms: u32) -> io::Result<()> 
         where
             T: io::Write
     {
