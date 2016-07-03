@@ -119,7 +119,7 @@ fn test_seed() {
 
     let repeat: Vec<u32> = (0..1024).map(|_| prn.next()).collect();
 
-    assert!(initial == repeat);
+    assert_eq!(initial, repeat);
     assert!(initial != different);
     assert!(repeat != different);
 }

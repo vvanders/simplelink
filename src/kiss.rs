@@ -94,12 +94,14 @@ pub fn encode_cmd(encoded: &mut Vec<u8>, cmd: u8, data: u8, port: u8) {
     encoded.push(FEND);
 }
 
-///Result from a decode operation
+/// Result from a decode operation
 pub struct DecodedFrame {
-    ///Port that this frame was decoded from
+    /// Port that this frame was decoded from
     pub port: u8,
-    ///Number of bytes read from the iterator that was passed to decode(). The calling client is responsible for advancing the interator `bytes_read` after the decode operation.
-    pub bytes_read: usize
+    /// Number of bytes read from the iterator that was passed to decode(). The calling client is responsible for advancing the interator `bytes_read` after the decode operation.
+    pub bytes_read: usize,
+    /// Number of bytes in the payload(bytes_read - escape/control bytes)
+    pub payload_size: usize
 }
 
 /// Decode a KISS frame into a series of bytes.
@@ -124,7 +126,9 @@ pub fn decode<T>(data: T, decoded: &mut Vec<u8>) -> Option<DecodedFrame> where T
     let (reserved, _) = data.size_hint();
     decoded.reserve(reserved);
 
-    let (_, port, last_idx) = data.enumerate()    //Keep track of idx so we can return the last idx we processed to the caller
+    let decode_start = decoded.len();
+
+    let (_, port, last_idx, payload_size) = data.enumerate()    //Keep track of idx so we can return the last idx we processed to the caller
         //Find our first valid start + end frame
         .scan((None, None), |&mut (ref mut start_frame, ref mut end_frame), (idx, byte)| {
             //If we've already found a valid range then stop iterating
@@ -186,7 +190,7 @@ pub fn decode<T>(data: T, decoded: &mut Vec<u8>) -> Option<DecodedFrame> where T
         })
         .filter_map(|x| x)  //Skip things we don't want
         //Decode frame into output buffer
-        .fold((decoded, None, None), |(out_decode, mut port, _), (idx, byte)| {
+        .fold((decoded, None, None, None), |(out_decode, mut port, _, _), (idx, byte)| {
             //If we've already defined the port that means we're on the data part of the frame
             if port.is_some() {
                 out_decode.push(byte);
@@ -194,15 +198,19 @@ pub fn decode<T>(data: T, decoded: &mut Vec<u8>) -> Option<DecodedFrame> where T
                 port = Some(byte >> 4);
             }
 
-            (out_decode, port, Some(idx))
+            let data_size = out_decode.len() - decode_start;
+            (out_decode, port, Some(idx), Some(data_size))
         });
 
     //Check if we found anything
     port.and_then(|port| {
         last_idx.and_then(|idx| {
-            Some(DecodedFrame {
-                port: port,
-                bytes_read: idx+2   //Note that since we truncate the FEND we need to add an extra offset here
+            payload_size.and_then(|payload_size| {
+                Some(DecodedFrame {
+                    port: port,
+                    bytes_read: idx+2,   //Note that since we truncate the FEND we need to add an extra offset here
+                    payload_size: payload_size
+                })
             })
         })
     })
@@ -214,37 +222,37 @@ fn test_encode() {
     {
         let mut data = vec!();
         encode(['T', 'E', 'S', 'T'].iter().map(|chr| *chr as u8), &mut data, 0);
-        assert!(data == vec!(FEND, CMD_DATA, 'T' as u8, 'E' as u8, 'S' as u8, 'T' as u8, FEND));
+        assert_eq!(data, vec!(FEND, CMD_DATA, 'T' as u8, 'E' as u8, 'S' as u8, 'T' as u8, FEND));
     }
 
     {
         let mut data = vec!();
         encode(['H', 'E', 'L', 'L', 'O'].iter().map(|chr| *chr as u8), &mut data, 5);
-        assert!(data == vec!(FEND, CMD_DATA | 0x50, 'H' as u8, 'E' as u8, 'L' as u8, 'L' as u8, 'O' as u8, FEND));
+        assert_eq!(data, vec!(FEND, CMD_DATA | 0x50, 'H' as u8, 'E' as u8, 'L' as u8, 'L' as u8, 'O' as u8, FEND));
     }
 
     {
         let mut data = vec!();
         encode([FEND, FESC].iter().map(|data| *data), &mut data, 0);
-        assert!(data == vec!(FEND, CMD_DATA, FESC, TFEND, FESC, TFESC, FEND));
+        assert_eq!(data, vec!(FEND, CMD_DATA, FESC, TFEND, FESC, TFESC, FEND));
     }
 
     {
         let mut data = vec!();
         encode_cmd(&mut data, CMD_TX_DELAY, 4, 0);
-        assert!(data == vec!(FEND, CMD_TX_DELAY, 0x04, FEND));
+        assert_eq!(data, vec!(FEND, CMD_TX_DELAY, 0x04, FEND));
     }
 
     {
         let mut data = vec!();
         encode_cmd(&mut data, CMD_TX_DELAY, 4, 6);
-        assert!(data == vec!(FEND, CMD_TX_DELAY | 0x60, 0x04, FEND));
+        assert_eq!(data, vec!(FEND, CMD_TX_DELAY | 0x60, 0x04, FEND));
     }
 
     {
         let mut data = vec!();
         encode_cmd(&mut data, CMD_RETURN, 4, 2);
-        assert!(data == vec!(FEND, CMD_RETURN, FEND));
+        assert_eq!(data, vec!(FEND, CMD_RETURN, FEND));
     }
 }
 
@@ -257,22 +265,23 @@ fn test_encode_decode_single<T>(source: T) where T: Iterator<Item=u8> {
     encode(expected.iter().map(|x| *x), &mut data, 5);
     match decode(data.iter().cloned(), &mut decoded) {
         Some(result) => {
-            assert!(result.port == 5);
-            assert!(result.bytes_read == data.len());
-            assert!(expected == decoded);
+            assert_eq!(result.port, 5);
+            assert_eq!(result.bytes_read, data.len());
+            assert_eq!(expected, decoded);
         },
         None => assert!(false)
     }
 }
 
 #[cfg(test)]
-fn test_decode_single<T>(data: &mut Vec<u8>, expected: T, port: u8) where T: Iterator<Item=u8> {
+fn test_decode_single(data: &mut Vec<u8>, expected: &[u8], port: u8) {
     let mut decoded = vec!();
 
     match decode(data.iter().cloned(), &mut decoded) {
         Some(result) => {
-            assert!(result.port == port);
-            assert!(expected.eq(decoded.into_iter()));
+            assert_eq!(result.port, port);
+            assert_eq!(expected, decoded.as_slice());
+            assert_eq!(result.payload_size, expected.len());
 
             //Remove the data so subsequent reads work
             data.drain(0..result.bytes_read);
@@ -302,8 +311,9 @@ fn test_empty_frame() {
     let mut decoded = vec!();
     match decode(data.iter().cloned(), &mut decoded) {
         Some(result) => {
-            assert!(result.bytes_read == data.len());
-            assert!(result.port == 0);
+            assert_eq!(result.bytes_read, data.len());
+            assert_eq!(result.payload_size, expected.len());
+            assert_eq!(result.port, 0);
 
             assert!(expected.iter().cloned().eq(decoded.into_iter()));
         },
@@ -323,8 +333,8 @@ fn test_multi_frame() {
     encode(expected_two.iter().cloned(), &mut data, 0);
     encode(expected_three.iter().cloned(), &mut data, 0);
 
-    test_decode_single(&mut data, expected_one.iter().cloned(), 0);
-    test_decode_single(&mut data, expected_two.iter().cloned(), 0);
-    test_decode_single(&mut data, expected_three.iter().cloned(), 0);
+    test_decode_single(&mut data, &expected_one, 0);
+    test_decode_single(&mut data, &expected_two, 0);
+    test_decode_single(&mut data, &expected_three, 0);
 }
 

@@ -271,14 +271,14 @@ fn serialize_ack_test() {
     let mut data = vec!();
 
     let count = to_bytes(&mut data, &Frame::Ack(ack.clone()), None).unwrap();
-    assert!(count == 4 + 4 + 2);
+    assert_eq!(count, 4 + 4 + 2);
 
     let mut reader = Cursor::new(data);
     let mut payload = [0; MTU];
     match from_bytes(&mut reader, &mut payload, count).unwrap() {
         Frame::Ack(read_ack) => {
-            assert!(read_ack.prn == ack.prn);
-            assert!(read_ack.src_addr == ack.src_addr);
+            assert_eq!(read_ack.prn, ack.prn);
+            assert_eq!(read_ack.src_addr, ack.src_addr);
         }
         _ => assert!(false)
     }
@@ -295,7 +295,7 @@ fn serialize_packet(dest: &[u32], payload: &[u8]) -> Vec<u8> {
     let mut data = vec!();
 
     let count = to_bytes(&mut data, &Frame::Data(data_packet.clone()), Some(payload)).unwrap();
-    assert!(count == 4 + 4 * (1 + dest.len()) + payload.len() + 2);
+    assert_eq!(count, 4 + 4 * (1 + dest.len()) + payload.len() + 2);
 
     data
 }
@@ -311,13 +311,13 @@ fn serialize_deserialize_packet(dest: &[u32], payload: &[u8]) {
     let mut read_payload = [0; MTU];
     match from_bytes(&mut reader, &mut read_payload, count).unwrap() {
         Frame::Data(read_data) => {
-            assert!(read_data.payload_size == payload.len());
+            assert_eq!(read_data.payload_size, payload.len());
             for (i, byte) in payload.iter().cloned().enumerate() {
-                assert!(read_payload[i] == byte);
+                assert_eq!(read_payload[i], byte);
             }
 
             for (i, test_addr) in dest.iter().cloned().enumerate() {
-                assert!(read_data.address_route[i] == test_addr);
+                assert_eq!(read_data.address_route[i], test_addr);
             }
         },
         _ => assert!(false)
@@ -367,7 +367,7 @@ fn test_addr_permuatations() {
 
             //Advance the route
             routing::advance(&mut addr);
-            assert!(addr[(size - i) as usize - 1] == routing::ADDRESS_SEPARATOR);
+            assert_eq!(addr[(size - i) as usize - 1], routing::ADDRESS_SEPARATOR);
         }
     }
 }

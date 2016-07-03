@@ -150,16 +150,19 @@ fn read_frame(pending: &mut Vec<u8>, pending_bytes: &mut usize) {
     let mut kiss_frame = vec!();
     match kiss::decode(pending.iter().cloned().take(*pending_bytes), &mut kiss_frame) {
         Some(frame) => {
+            println!("kR {:?}", &kiss_frame);
+
             let mut nbp_payload = vec!();
-            match frame::from_bytes(&mut io::Cursor::new(&kiss_frame), &mut nbp_payload, frame.bytes_read) {
+            nbp_payload.resize(frame::MTU, 0);
+            match frame::from_bytes(&mut io::Cursor::new(&kiss_frame), &mut nbp_payload, frame.payload_size) {
                 Ok(nbp_frame) => {
                     match nbp_frame {
                         frame::Frame::Data(header) => {
                             let source = pretty_print_route(header.address_route);
 
-                            match std::str::from_utf8(&nbp_payload) {
+                            match std::str::from_utf8(&nbp_payload[..header.payload_size]) {
                                 Ok(msg) => {
-                                    println!("{}: {}", source, msg);
+                                    println!("{}: {}", source, msg.trim());
                                 },
                                 Err(e) => {
                                     println!("{}: Malformed UTF-8 error: {}", source, e);
@@ -232,6 +235,8 @@ fn send_frame(prn: &mut prn_id::PRN, input: &String, port: &mut io::Write) -> Re
             let mut kiss_frame = vec!();
             kiss::encode(full_frame.iter().cloned(), &mut kiss_frame, 0);
 
+            println!("fW {:?}", &full_frame);
+
             return port.write_all(&kiss_frame).map_err(|err| err.kind())
         },
         Err(msg) => {
@@ -253,7 +258,8 @@ fn string_to_addr(addr: &str) -> [char; 7] {
 
 fn pretty_print_route(route: [u32; 17]) -> String {
     route.into_iter().cloned()
-        .map(|addr| address::decode(addr).into_iter().cloned().collect::<String>())
+        .filter(|addr| *addr != routing::ADDRESS_SEPARATOR)
+        .map(|addr| address::decode(addr).into_iter().cloned().collect::<String>().trim_right_matches('0').to_string())
         .fold(String::new(), |route, addr| {
             if route.len() > 0 {
                 route + " -> " + addr.as_str()

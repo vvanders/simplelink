@@ -2,23 +2,22 @@ use std::io;
 use std::cmp;
 
 pub struct Port {
-    buffer: [u8; 2000],
-    offset: usize
+    buffer: Vec<u8>
 }
 
 pub fn new() -> Port {
     Port {
-        buffer: [0; 2000],
-        offset: 0
+        buffer: vec!()
     }
 }
 
 impl io::Read for Port {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-       let read = cmp::min(buf.len(), self.offset);
-       self.offset -= read;
+       let read = cmp::min(buf.len(), self.buffer.len());
 
        buf[..read].clone_from_slice(&self.buffer[..read]);
+       println!("R {:?}", &buf[..read]);
+       self.buffer.drain(..read);
 
        Ok(read)
     }
@@ -26,12 +25,9 @@ impl io::Read for Port {
 
 impl io::Write for Port {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let write = cmp::min(self.buffer.len() - self.offset, buf.len());
-        self.buffer[self.offset..self.offset+write].clone_from_slice(&buf[..write]);
-
-        self.offset += write;
-
-        Ok(write)
+        self.buffer.extend_from_slice(buf);
+        println!("W {:?}", &buf);
+        Ok(buf.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {

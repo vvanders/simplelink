@@ -155,5 +155,5 @@ fn crc_test_u32() {
     second_crc = update_u32(((bytes[0] as u32) << 24) | ((bytes[1] as u32) << 16) | ((bytes[2] as u32) << 8) | (bytes[3] as u32), second_crc);
     second_crc = finish(second_crc);
 
-    assert!(first_crc == second_crc);
+    assert_eq!(first_crc, second_crc);
 }
