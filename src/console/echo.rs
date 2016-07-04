@@ -1,3 +1,4 @@
+///! Utility struct for loopback reading/writing
 use std::io;
 use std::cmp;
 
@@ -16,6 +17,7 @@ impl io::Read for Port {
        let read = cmp::min(buf.len(), self.buffer.len());
 
        buf[..read].clone_from_slice(&self.buffer[..read]);
+       trace!("Loopback Read {:?}", &buf[..read]);
        self.buffer.drain(..read);
 
        Ok(read)
@@ -25,6 +27,7 @@ impl io::Read for Port {
 impl io::Write for Port {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.buffer.extend_from_slice(buf);
+        trace!("Loopback Wrote {:?}", &buf);
         Ok(buf.len())
     }
 

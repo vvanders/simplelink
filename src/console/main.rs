@@ -8,11 +8,12 @@ extern crate fern;
 
 mod echo;
 
-use nbplink::nbp::{frame, address, prn_id, routing};
-use nbplink::kiss;
 use std::time::Duration;
 use std::io;
 use std::iter;
+
+use nbplink::nbp::{frame, address, prn_id, routing};
+use nbplink::kiss;
 
 fn main() {
     nbplink::util::init_log(log::LogLevelFilter::Trace);
@@ -51,12 +52,10 @@ fn main() {
     let callsign = matches.value_of("callsign").expect("No callsign specified");
     let baud = matches.value_of("baud").and_then(|baud| baud.parse::<usize>().map(|r| Some(r)).unwrap_or(None));
 
-    /*
     let cmds = match matches.values_of("cmd") {
         Some(cmds) => cmds.collect::<Vec<&str>>(),
         None => vec!()
     };
-    */
 
     let echo = matches.is_present("echo");
 
@@ -76,6 +75,24 @@ fn main() {
     } else {
         None
     };
+
+    for cmd in cmds {
+        let write_port: &mut io::Write = if echo {
+            &mut echo_port
+        } else {
+            port.as_mut().unwrap()
+        };
+        
+        let write_cmd = cmd.to_string() + "\n";
+
+        use std::io::Write;
+        match write_port.write_all(write_cmd.as_bytes()) {
+            Ok(_) => info!("Sending '{}' to TNC", cmd),
+            Err(e) => {
+                error!("Unable to send '{}' to TNC {:?}", cmd, e);
+            }
+        }
+    }
 
     let mut prn = match prn_id::new(string_to_addr(callsign)) {
         Some(prn) => prn,
