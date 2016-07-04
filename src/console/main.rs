@@ -16,8 +16,6 @@ use nbplink::nbp::{frame, address, prn_id, routing};
 use nbplink::kiss;
 
 fn main() {
-    nbplink::util::init_log(log::LogLevelFilter::Trace);
-
     //Parse command line arguments
     let matches = clap::App::new("NBPLink Command line interface")
         .version("0.1.0")
@@ -46,7 +44,32 @@ fn main() {
             .short("e")
             .long("echo")
             .help("Enable echo mode, rs232 port is disabled and all data is echoed back to the client"))
+        .arg(clap::Arg::with_name("debug")
+            .short("d")
+            .long("debug")
+            .takes_value(true)
+            .number_of_values(1)
+            .help("Debug mode to enable, supports: Off|Error|Warn|Info|Debug|Trace, Default: Info"))
         .get_matches();
+
+    {
+        let debug = match matches.value_of("debug") {
+            Some(debug) => debug,
+            None => "Infp"
+        };
+
+        let filter = match debug.to_lowercase().as_str() {
+            "off" => log::LogLevelFilter::Off,
+            "error" => log::LogLevelFilter::Error,
+            "warn" => log::LogLevelFilter::Warn,
+            "info" => log::LogLevelFilter::Info,
+            "debug" => log::LogLevelFilter::Debug,
+            "trace" => log::LogLevelFilter::Trace,
+            _ => log::LogLevelFilter::Error
+        };
+
+        nbplink::util::init_log(filter);
+    }
 
     let port = matches.value_of_os("port").expect("No port specified");
     let callsign = matches.value_of("callsign").expect("No callsign specified");
