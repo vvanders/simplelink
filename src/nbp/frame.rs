@@ -4,8 +4,13 @@ use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian};
 use nbp::crc16;
 use nbp::prn_id;
 use nbp::routing;
+use nbp::address;
 
+/// MTU of payload
 pub const MTU: usize = 1500;
+
+/// Max size for a packet
+pub const MAX_PACKET_SIZE: usize = MTU + 4 + 4 * 18 + 2;
 
 /// Represents a single NBP Ack Frame
 #[derive(Copy,Clone)]
@@ -113,15 +118,21 @@ fn read_u32<T>(bytes: &mut T, crc: &mut crc16::CRC) -> Result<u32, ReadError> wh
 
 /// Read in a frame from a series of bytes.
 pub fn from_bytes<T>(bytes: &mut T, out_payload: &mut [u8], size: usize) -> Result<Frame, ReadError> where T: io::Read {
+    trace!("Reading frame from bytes");
+
     let mut crc = crc16::new();
     let mut err = None;
 
     //All frames start with PRN
     let prn = try!(read_u32(bytes, &mut crc));
 
+    debug!("Decoding frame with PRN {} size {}", prn, size);
+
     //If we have just a PRN, addr and CRC this is an ack frame
     let frame = if size == 4 + 4 + 2 {
         let addr = try!(read_u32(bytes, &mut crc));
+
+        debug!("Read ACK frame with PRN {} Callsign {}", prn, address::format_addr(addr));
 
         Frame::Ack(AckHeader {
             prn: prn,
@@ -133,8 +144,12 @@ pub fn from_bytes<T>(bytes: &mut T, out_payload: &mut [u8], size: usize) -> Resu
         let mut addr = [0; 17];
         let mut addr_len = 0;
 
+        debug!("Decoding routing address");
+
         for _ in 0..17 {
             let value = try!(read_u32(bytes, &mut crc));
+
+            trace!("Got addr {} {}", value, address::format_addr(value));
 
             if value == routing::ADDRESS_SEPARATOR {
                 addr_marker += 1;
@@ -144,6 +159,7 @@ pub fn from_bytes<T>(bytes: &mut T, out_payload: &mut [u8], size: usize) -> Resu
             addr_len += 1;
 
             if addr_marker == 2 {
+                trace!("End of addr, len {}", addr_len);
                 break;
             }
         }
@@ -153,7 +169,10 @@ pub fn from_bytes<T>(bytes: &mut T, out_payload: &mut [u8], size: usize) -> Resu
             let value = try!(read_u32(bytes, &mut crc));
             addr_len += 1;
 
+            trace!("End of addr, len {}", addr_len);
+
             if value != 0 {
+                error!("Malformed address in packet {}, {:?}", prn, addr);
                 err = Some(ReadError::BadAddress);
             }
         }
@@ -161,17 +180,24 @@ pub fn from_bytes<T>(bytes: &mut T, out_payload: &mut [u8], size: usize) -> Resu
         //size - (PRN + ADDR size + CRC)
         let payload_size = size - (4 + addr_len * 4 + 2);
 
+        debug!("Decode payload of {} bytes", payload_size);
+
         if payload_size > out_payload.len() {
+            error!("Payload exceeded output buffer size {} > {} in packet {}", payload_size, out_payload.len(), prn);
             err = Some(ReadError::Truncated);
         }
 
         use std::io::Read;
         try!(bytes.take(payload_size as u64).read(out_payload).map_err(|e| ReadError::IO(e)));
 
+        trace!("Read payload");
+
         //Update CRC
         crc = out_payload[..payload_size].iter().fold(crc, |crc, byte| {
             crc16::update_u8(*byte, crc)
         });
+
+        debug!("Read DATA frame with PRN {} Callsign {}", prn, routing::format_route(addr));
 
         Frame::Data(DataHeader{
             prn: prn,
@@ -185,9 +211,14 @@ pub fn from_bytes<T>(bytes: &mut T, out_payload: &mut [u8], size: usize) -> Resu
     //Validate our CRC
     let frame_crc = try!(bytes.read_u16::<BigEndian>().map_err(|e| ReadError::IO(e)));
 
+    trace!("Checking CRC {} {}", frame_crc, crc);
+
     if frame_crc != crc {
+        error!("CRC check failed in packet {}", prn);
         err = Some(ReadError::CRCFailure);
     }
+
+    trace!("Successfully decoded packet");
 
     err.map(|err| Err(err))
         .unwrap_or(Ok(frame))
@@ -204,9 +235,10 @@ fn write_u32<T>(value: u32, bytes: &mut T, crc: &mut crc16::CRC) -> Result<usize
 pub fn to_bytes<T>(bytes: &mut T, frame: &Frame, payload: Option<&[u8]>) -> Result<usize, WriteError> where T: io::Write {
     let mut crc = crc16::new();
     let mut size = 0;
-
     match frame {
         &Frame::Data(ref data_frame) => {
+            debug!("Encoding DATA frame {} to bytes", data_frame.prn);
+
             //Start with PRN
             size += try!(write_u32(data_frame.prn, bytes, &mut crc));
 
@@ -244,6 +276,8 @@ pub fn to_bytes<T>(bytes: &mut T, frame: &Frame, payload: Option<&[u8]>) -> Resu
             }
         },
         &Frame::Ack(ref ack_frame) => {
+            debug!("Encoding ACK frame {} to bytes", ack_frame.prn);
+
             //Start with PRN
             size += try!(write_u32(ack_frame.prn, bytes, &mut crc));
 
@@ -257,6 +291,8 @@ pub fn to_bytes<T>(bytes: &mut T, frame: &Frame, payload: Option<&[u8]>) -> Resu
 
     try!(bytes.write_u16::<BigEndian>(crc).map_err(|e| WriteError::IO(e)));
     size += 2;
+
+    trace!("Finished encoding packet {} bytes", size);
 
     Ok(size)
 }

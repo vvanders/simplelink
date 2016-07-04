@@ -1,6 +1,10 @@
 extern crate clap;
 extern crate serial;
+extern crate pdcurses;
 extern crate nbplink;
+#[macro_use]
+extern crate log;
+extern crate fern;
 
 mod echo;
 
@@ -11,6 +15,8 @@ use std::io;
 use std::iter;
 
 fn main() {
+    nbplink::util::init_log(log::LogLevelFilter::Trace);
+
     //Parse command line arguments
     let matches = clap::App::new("NBPLink Command line interface")
         .version("0.1.0")
@@ -29,6 +35,12 @@ fn main() {
             .takes_value(true)
             .number_of_values(1)
             .help("Command to run before starting TNC link, can be specified multiple times, ex: '-c KISS -c RESTART'"))
+        .arg(clap::Arg::with_name("baud")
+            .short("b")
+            .long("baud")
+            .takes_value(true)
+            .number_of_values(1)
+            .help("Sets baud rate for rs232 serial port"))
         .arg(clap::Arg::with_name("echo")
             .short("e")
             .long("echo")
@@ -37,23 +49,26 @@ fn main() {
 
     let port = matches.value_of_os("port").expect("No port specified");
     let callsign = matches.value_of("callsign").expect("No callsign specified");
+    let baud = matches.value_of("baud").and_then(|baud| baud.parse::<usize>().map(|r| Some(r)).unwrap_or(None));
 
+    /*
     let cmds = match matches.values_of("cmd") {
         Some(cmds) => cmds.collect::<Vec<&str>>(),
         None => vec!()
     };
+    */
 
     let echo = matches.is_present("echo");
 
     let mut echo_port = echo::new();
     let mut port = if !echo {
-        Some(match configure_port(port) {
+        Some(match configure_port(port, baud) {
             Ok(port) => port,
             Err(e) => {
                 match e.kind() {
-                    serial::ErrorKind::NoDevice => println!("Unable to open port, no device found for {:?}", port),
-                    serial::ErrorKind::InvalidInput => println!("Unable to open port, {:?} is not a valid device name", port),
-                    serial::ErrorKind::Io(io_e) => println!("Unable to open port, IO error: {:?}", io_e)
+                    serial::ErrorKind::NoDevice => error!("Unable to open port, no device found for {:?}", port),
+                    serial::ErrorKind::InvalidInput => error!("Unable to open port, {:?} is not a valid device name", port),
+                    serial::ErrorKind::Io(io_e) => error!("Unable to open port, IO error: {:?}", io_e)
                 }
                 return
             }
@@ -89,14 +104,14 @@ fn main() {
                         match send_frame(&mut prn, &input, write_port) {
                             Ok(()) => (),
                             Err(e) => {
-                                println!("Unable to send frame: {:?}", e);
+                                error!("Unable to send frame: {:?}", e);
                             }
                         }
                     }
                 }
             },
             Err(e) => {
-                println!("Failed to read from stdin: {:?}", e);
+                error!("Failed to read from stdin: {:?}", e);
                 return
             } 
         }
@@ -114,43 +129,64 @@ fn main() {
         let read = match read_port.read(&mut pending[pending_bytes..]) {
             Ok(r) => r,
             Err(e) => {
-                println!("Tried to read bytes from serial port but IO error occurred: {:?}", e);
-                return
+                match e.kind() {
+                    io::ErrorKind::TimedOut => 0,
+                    _ => {
+                        error!("Tried to read bytes from serial port but IO error occurred: {:?}", e);
+                        return
+                    }
+                }
             }
         };
 
-        pending_bytes += read;
-        read_frame(&mut pending, &mut pending_bytes);
+        if read > 0 {
+            pending_bytes += read;
+            read_frame(&mut pending, &mut pending_bytes);
+        }
     }
 }
 
-fn configure_port(name: &std::ffi::OsStr) -> serial::Result<serial::SystemPort> {
+fn configure_port(name: &std::ffi::OsStr, baud: Option<usize>) -> serial::Result<serial::SystemPort> {
     use serial::SerialPort;
 
     let mut port = try!(serial::open(name));
 
-    //@todo: pull these out into cmd flags
     try!(port.reconfigure(&|settings| {
-        try!(settings.set_baud_rate(serial::Baud9600));
-        settings.set_char_size(serial::Bits8);
-        settings.set_parity(serial::ParityNone);
-        settings.set_stop_bits(serial::Stop1);
-        settings.set_flow_control(serial::FlowNone);
+        match baud {
+            Some(baud) => {
+                let enum_baud = match baud {
+                    110 => serial::Baud110,
+                    600 => serial::Baud600,
+                    1200 => serial::Baud1200,
+                    2400 => serial::Baud2400,
+                    4800 => serial::Baud4800,
+                    9600 => serial::Baud9600,
+                    19200 => serial::Baud19200,
+                    38400 => serial::Baud38400,
+                    57600 => serial::Baud57600,
+                    115200 => serial::Baud115200,
+                    n => serial::BaudOther(n)
+                };
 
+                try!(settings.set_baud_rate(enum_baud));
+            },
+            _ => ()
+        }
         Ok(())
     }));
 
     //Return immediately
-    try!(port.set_timeout(Duration::from_millis(0)));
+    try!(port.set_timeout(Duration::from_millis(1)));
 
     Ok(port)
 }
 
 fn read_frame(pending: &mut Vec<u8>, pending_bytes: &mut usize) {
+    trace!("Reading wire frame {:?}", &pending[..*pending_bytes]);
     let mut kiss_frame = vec!();
     match kiss::decode(pending.iter().cloned().take(*pending_bytes), &mut kiss_frame) {
         Some(frame) => {
-            println!("kR {:?}", &kiss_frame);
+            debug!("Decoded KISS frame {:?}", &kiss_frame);
 
             let mut nbp_payload = vec!();
             nbp_payload.resize(frame::MTU, 0);
@@ -158,14 +194,14 @@ fn read_frame(pending: &mut Vec<u8>, pending_bytes: &mut usize) {
                 Ok(nbp_frame) => {
                     match nbp_frame {
                         frame::Frame::Data(header) => {
-                            let source = pretty_print_route(header.address_route);
+                            let source = routing::format_route(header.address_route);
 
                             match std::str::from_utf8(&nbp_payload[..header.payload_size]) {
                                 Ok(msg) => {
                                     println!("{}: {}", source, msg.trim());
                                 },
                                 Err(e) => {
-                                    println!("{}: Malformed UTF-8 error: {}", source, e);
+                                    error!("{}: Malformed UTF-8 error: {}", source, e);
                                 }
                             }
                         },
@@ -175,7 +211,7 @@ fn read_frame(pending: &mut Vec<u8>, pending_bytes: &mut usize) {
                     }
                 },
                 Err(e) => {
-                    println!("Unable to parse NBP frame: {:?}", e);
+                    error!("Unable to parse NBP frame: {:?}", e);
                 }
             }
 
@@ -222,7 +258,7 @@ fn send_frame(prn: &mut prn_id::PRN, input: &String, port: &mut io::Write) -> Re
         Ok(dest) => {
             let frame = match frame::new_data(prn, &dest, message.len()) {
                 Err(e) => {
-                    println!("Unable to create frame: {:?}", e);
+                    error!("Unable to create frame: {:?}", e);
                     return Ok(())
                 }
                 Ok(frame) => frame
@@ -230,17 +266,17 @@ fn send_frame(prn: &mut prn_id::PRN, input: &String, port: &mut io::Write) -> Re
 
             let mut full_frame = vec!();
             try!(frame::to_bytes(&mut full_frame, &frame::Frame::Data(frame), Some(message)).map_err(|_| io::ErrorKind::InvalidData));
-
+            debug!("Encoding KISS frame {:?}", &full_frame);
+            
             //Encode into kiss frame
             let mut kiss_frame = vec!();
             kiss::encode(full_frame.iter().cloned(), &mut kiss_frame, 0);
 
-            println!("fW {:?}", &full_frame);
-
+            trace!("Sending frame over the wire {:?}", &kiss_frame);
             return port.write_all(&kiss_frame).map_err(|err| err.kind())
         },
         Err(msg) => {
-            println!("{}", msg);
+            error!("{}", msg);
             return Ok(())
         }
     }
@@ -254,17 +290,4 @@ fn string_to_addr(addr: &str) -> [char; 7] {
     }
 
     local_addr
-}
-
-fn pretty_print_route(route: [u32; 17]) -> String {
-    route.into_iter().cloned()
-        .filter(|addr| *addr != routing::ADDRESS_SEPARATOR)
-        .map(|addr| address::decode(addr).into_iter().cloned().collect::<String>().trim_right_matches('0').to_string())
-        .fold(String::new(), |route, addr| {
-            if route.len() > 0 {
-                route + " -> " + addr.as_str()
-            } else {
-                addr
-            }
-        })
 }

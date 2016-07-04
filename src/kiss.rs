@@ -39,6 +39,8 @@ pub const CMD_RETURN: u8 = 0xFF;
 /// assert!(data == vec!(kiss::FEND, kiss::CMD_DATA, 'T' as u8, 'E' as u8, 'S' as u8, 'T' as u8, kiss::FEND));
 /// ```
 pub fn encode<T>(data: T, encoded: &mut Vec<u8>, port: u8) where T: Iterator<Item=u8> {
+    trace!("Encoding KISS frame for port {}", port);
+
     let (reserved, _) = data.size_hint();
     encoded.reserve(reserved + 3);
 
@@ -50,6 +52,7 @@ pub fn encode<T>(data: T, encoded: &mut Vec<u8>, port: u8) where T: Iterator<Ite
         }
     });
 
+    let encoded_start = encoded.len();
     encoded.push(FEND);
 
     //Data frame command, port is high part of the nibble
@@ -65,6 +68,9 @@ pub fn encode<T>(data: T, encoded: &mut Vec<u8>, port: u8) where T: Iterator<Ite
     }
 
     encoded.push(FEND);
+
+    let encoded_len = encoded.len() - encoded_start;
+    debug!("Encoded KISS frame of {} bytes for port {}", encoded_len, port);
 }
 
 /// Encodes a command to be sent to the KISS TNC.
@@ -79,6 +85,8 @@ pub fn encode<T>(data: T, encoded: &mut Vec<u8>, port: u8) where T: Iterator<Ite
 /// assert!(data == vec!(kiss::FEND, kiss::CMD_TX_DELAY | 0x60, 0x04, kiss::FEND));
 /// ```
 pub fn encode_cmd(encoded: &mut Vec<u8>, cmd: u8, data: u8, port: u8) {
+    trace!("Encoding KISS command {} {} for port {}", cmd, data, port);
+
     encoded.push(FEND);
 
     match cmd {
@@ -92,6 +100,8 @@ pub fn encode_cmd(encoded: &mut Vec<u8>, cmd: u8, data: u8, port: u8) {
     }
 
     encoded.push(FEND);
+
+    debug!("Encoded KISS command {} {} for port {}", cmd, data, port);
 }
 
 /// Result from a decode operation
@@ -126,6 +136,8 @@ pub fn decode<T>(data: T, decoded: &mut Vec<u8>) -> Option<DecodedFrame> where T
     let (reserved, _) = data.size_hint();
     decoded.reserve(reserved);
 
+    trace!("Decoding KISS frames");
+
     let decode_start = decoded.len();
 
     let (_, port, last_idx, payload_size) = data.enumerate()    //Keep track of idx so we can return the last idx we processed to the caller
@@ -139,6 +151,7 @@ pub fn decode<T>(data: T, decoded: &mut Vec<u8>) -> Option<DecodedFrame> where T
                     //Looking for start of the frame
                     if start_frame.is_none() {
                         if byte == FEND {
+                            trace!("Found start frame at {} idx", idx);
                             *start_frame = Some(idx);
                             Some((idx, byte))
                         } else {
@@ -148,8 +161,10 @@ pub fn decode<T>(data: T, decoded: &mut Vec<u8>) -> Option<DecodedFrame> where T
                         if byte == FEND {
                             //Empty frame, just restart the scan
                             if start_frame.unwrap()+1 == idx {
+                                trace!("Found empty frame at {} idx, moving to next frame", idx);
                                 *start_frame = Some(idx);
                             } else {
+                                trace!("Found end frame at {} idx", idx);
                                 *end_frame = Some(idx);
                             }
                         }
@@ -196,6 +211,7 @@ pub fn decode<T>(data: T, decoded: &mut Vec<u8>) -> Option<DecodedFrame> where T
                 out_decode.push(byte);
             } else {    //First byte is cmd + port, cmd should always be data(0x00)
                 port = Some(byte >> 4);
+                trace!("Decoded port is {}", port.as_ref().unwrap());
             }
 
             let data_size = out_decode.len() - decode_start;
@@ -206,6 +222,8 @@ pub fn decode<T>(data: T, decoded: &mut Vec<u8>) -> Option<DecodedFrame> where T
     port.and_then(|port| {
         last_idx.and_then(|idx| {
             payload_size.and_then(|payload_size| {
+                debug!("Decoded KISS frame of {} bytes on port {}", payload_size, port);
+
                 Some(DecodedFrame {
                     port: port,
                     bytes_read: idx+2,   //Note that since we truncate the FEND we need to add an extra offset here
@@ -213,6 +231,9 @@ pub fn decode<T>(data: T, decoded: &mut Vec<u8>) -> Option<DecodedFrame> where T
                 })
             })
         })
+    }).or_else(|| {
+        debug!("Empty or incomplete frame, skipping decode");
+        None
     })
 }
 

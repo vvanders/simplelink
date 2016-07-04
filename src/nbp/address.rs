@@ -10,7 +10,6 @@ pub const BROADCAST_ADDRESS_SHORT: [char; 7] = ['3', 'Z', '1', '4', '1', 'Z', '1
 /// Long form broadcast address
 pub const BROADCAST_ADDRESS: [char; 7] = ['*'; 7];
 
-
 /// Converts a character value to a numeric value
 pub fn symbol_to_character(symbol: u8) -> char {
     SYMBOL_TABLE[symbol as usize]
@@ -55,7 +54,10 @@ pub fn character_to_symbol(character: char) -> Option<u8> {
         'X' => Some(33),
         'Y' => Some(34),
         'Z' => Some(35),
-        _ => None
+        _ => {
+            warn!("Tried to map character to symbol but {} is not a valid character([A-Z],[0-9])", character);
+            None
+        }
     }
 }
 
@@ -110,6 +112,13 @@ pub fn decode(address: u32) -> [char; 7] {
 
         (addr, remainder / 36)
     }).0
+}
+
+/// Decodes an address and formats it into a String removing any trailing zeroes
+pub fn format_addr(addr: u32) -> String {
+    decode(addr).into_iter().cloned()
+        .collect::<String>()
+        .trim_right_matches('0').to_string()
 }
 
 #[test]

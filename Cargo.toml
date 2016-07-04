@@ -7,6 +7,10 @@ authors = ["Val Vanderschaegen <valere.vanderschaegen@gmail.com>"]
 serial = "0.3"
 byteorder = "0.5"
 clap = "2.9.0"
+pdcurses-sys = "0.3.0"
+log = "0.3.6"
+fern = "0.3.5"
+time = "0.1.35"
 
 [lib]
 name = "nbplink"
