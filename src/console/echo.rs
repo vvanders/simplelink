@@ -16,18 +16,26 @@ impl io::Read for Port {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
        let read = cmp::min(buf.len(), self.buffer.len());
 
-       buf[..read].clone_from_slice(&self.buffer[..read]);
-       trace!("Loopback Read {:?}", &buf[..read]);
-       self.buffer.drain(..read);
+        buf[..read].clone_from_slice(&self.buffer[..read]);
 
-       Ok(read)
+        if read > 0 {
+            trace!("Loopback Read {:?}", &buf[..read]);
+        }
+
+        self.buffer.drain(..read);
+
+        Ok(read)
     }
 }
 
 impl io::Write for Port {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.buffer.extend_from_slice(buf);
-        trace!("Loopback Wrote {:?}", &buf);
+        
+        if buf.len() > 0 {
+            trace!("Loopback Wrote {:?}", &buf);
+        }
+
         Ok(buf.len())
     }
 

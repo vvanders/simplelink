@@ -5,12 +5,15 @@ extern crate nbplink;
 #[macro_use]
 extern crate log;
 extern crate fern;
+extern crate time;
 
 mod echo;
+mod display;
 
 use std::time::Duration;
 use std::io;
 use std::iter;
+use std::thread;
 
 use nbplink::nbp::{frame, address, prn_id, routing};
 use nbplink::kiss;
@@ -125,13 +128,16 @@ fn main() {
         }
     };
 
+    let mut display = display::new();
+
     loop {
-        let mut input = String::new();
+        let start_ms = time::precise_time_ns() / 1_000_000;
+
         let mut pending = vec!();
         let mut pending_bytes = 0;
 
-        match io::stdin().read_line(&mut input) {
-            Ok(_) => {
+        match display.get_input() {
+            Some(input) => {
                 match input.len() {
                     0 => (),
                     _ => {
@@ -150,10 +156,7 @@ fn main() {
                     }
                 }
             },
-            Err(e) => {
-                error!("Failed to read from stdin: {:?}", e);
-                return
-            } 
+            None => ()
         }
 
         //Make sure we can always read at least the MTU
@@ -181,7 +184,20 @@ fn main() {
 
         if read > 0 {
             pending_bytes += read;
-            read_frame(&mut pending, &mut pending_bytes);
+            match read_frame(&mut pending, &mut pending_bytes) {
+                Some(msg) => {
+                    display.push_message(&msg);
+                },
+                None => ()
+            }
+        }
+
+        let exec_ms = time::precise_time_ns() / 1_000_000;
+
+        //Throttle our updates to 30hz
+        if start_ms + 33 < exec_ms {
+            let sleep_ms = exec_ms - (start_ms + 33);
+            thread::sleep(Duration::from_millis(sleep_ms));
         }
     }
 }
@@ -221,7 +237,7 @@ fn configure_port(name: &std::ffi::OsStr, baud: Option<usize>) -> serial::Result
     Ok(port)
 }
 
-fn read_frame(pending: &mut Vec<u8>, pending_bytes: &mut usize) {
+fn read_frame(pending: &mut Vec<u8>, pending_bytes: &mut usize) -> Option<String> {
     trace!("Reading wire frame {:?}", &pending[..*pending_bytes]);
     let mut kiss_frame = vec!();
     match kiss::decode(pending.iter().cloned().take(*pending_bytes), &mut kiss_frame) {
@@ -230,7 +246,7 @@ fn read_frame(pending: &mut Vec<u8>, pending_bytes: &mut usize) {
 
             let mut nbp_payload = vec!();
             nbp_payload.resize(frame::MTU, 0);
-            match frame::from_bytes(&mut io::Cursor::new(&kiss_frame), &mut nbp_payload, frame.payload_size) {
+            let result = match frame::from_bytes(&mut io::Cursor::new(&kiss_frame), &mut nbp_payload, frame.payload_size) {
                 Ok(nbp_frame) => {
                     match nbp_frame {
                         frame::Frame::Data(header) => {
@@ -238,29 +254,33 @@ fn read_frame(pending: &mut Vec<u8>, pending_bytes: &mut usize) {
 
                             match std::str::from_utf8(&nbp_payload[..header.payload_size]) {
                                 Ok(msg) => {
-                                    println!("{}: {}", source, msg.trim());
+                                    Some(format!("{}: {}", source, msg.trim()))
                                 },
                                 Err(e) => {
                                     error!("{}: Malformed UTF-8 error: {}", source, e);
+                                    None
                                 }
                             }
                         },
                         frame::Frame::Ack(header) => {
-                            println!("{}: {} ACK", header.prn, address::decode(header.src_addr).into_iter().cloned().collect::<String>());
+                            Some(format!("{}: {} ACK", header.prn, address::decode(header.src_addr).into_iter().cloned().collect::<String>()))
                         }
                     }
                 },
                 Err(e) => {
                     error!("Unable to parse NBP frame: {:?}", e);
+                    None
                 }
-            }
+            };
 
             //Remove the data we parsed
             assert!(frame.bytes_read >= *pending_bytes);
             pending.drain(..*pending_bytes);
             *pending_bytes -= frame.bytes_read;
+
+            result
         },
-        None => ()  //Nothing decoded yet, we need more data
+        None => None  //Nothing decoded yet, we need more data
     }
 }
 

@@ -21,6 +21,8 @@ impl Table {
     pub fn add(&mut self, prn: prn_id::PrnValue) {
         self.prns[self.last_idx] = prn;
 
+        trace!("Added prn {} at idx {} to prn table", prn, self.last_idx);
+
         self.last_idx += 1;
 
         if self.last_idx >= 1000 {

@@ -4,6 +4,12 @@ use nbp::address;
 ///Separater value to determine where we are in the routing path
 pub const ADDRESS_SEPARATOR: u32 = 0x0;
 
+///Maximum amount of addresses in a route
+pub const MAX_LENGTH: usize = 17;
+
+///Route of a NBP packet, allows for 16 callsigns + separator to denote where the packet is in its routing
+pub type Route = [u32; MAX_LENGTH];
+
 ///Advances the source -> dest separator in a route by one, returns false if no separator was found
 pub fn advance(route: &mut [u32]) -> bool {
     let sep_idx = route.iter().enumerate().fold(None, |found, (i, value)| {

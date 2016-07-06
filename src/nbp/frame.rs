@@ -27,7 +27,7 @@ pub struct DataHeader {
     /// Pseudo-Random unique identifier for this packet. This is combination of PRN + XOR of callsign.
     pub prn: u32,
     /// Forward and return address routing. Each path can contain up to 16 addresses plus a single separator.
-    pub address_route: [u32; 17],
+    pub address_route: routing::Route,
     /// Size of the payload 
     pub payload_size: usize
 }
@@ -80,9 +80,9 @@ pub fn new_ack(prn: u32, src_addr: u32) -> AckHeader {
 
 /// Constructs a new data frame
 pub fn new_data(prn: &mut prn_id::PRN, dest: &[u32], payload_size: usize) -> Result<DataHeader, EncodeError> {
-    let mut addr: [u32; 17] = [0; 17];
+    let mut addr: routing::Route = [0; routing::MAX_LENGTH];
 
-    if dest.len() > 17 {
+    if dest.len() > routing::MAX_LENGTH {
         return Err(EncodeError::AddressTooLong)
     }
 
@@ -141,12 +141,12 @@ pub fn from_bytes<T>(bytes: &mut T, out_payload: &mut [u8], size: usize) -> Resu
     } else {
         //Scan in our address. We're looking for u32+, 0x0, u32+, 0x0.
         let mut addr_marker = 0;
-        let mut addr = [0; 17];
+        let mut addr = [0; routing::MAX_LENGTH];
         let mut addr_len = 0;
 
         debug!("Decoding routing address");
 
-        for _ in 0..17 {
+        for _ in 0..routing::MAX_LENGTH {
             let value = try!(read_u32(bytes, &mut crc));
 
             trace!("Got addr {} {}", value, address::format_addr(value));
@@ -165,7 +165,7 @@ pub fn from_bytes<T>(bytes: &mut T, out_payload: &mut [u8], size: usize) -> Resu
         }
 
         //If we saw 17 values that means that the 18th one must be a 0x0 separator, otherwise this is malformed
-        if addr_len == 17 && addr_marker != 2 {
+        if addr_len == routing::MAX_LENGTH && addr_marker != 2 {
             let value = try!(read_u32(bytes, &mut crc));
             addr_len += 1;
 
