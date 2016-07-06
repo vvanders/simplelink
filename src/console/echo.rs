@@ -31,7 +31,7 @@ impl io::Read for Port {
 impl io::Write for Port {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.buffer.extend_from_slice(buf);
-        
+
         if buf.len() > 0 {
             trace!("Loopback Wrote {:?}", &buf);
         }
