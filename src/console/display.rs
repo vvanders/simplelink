@@ -1,8 +1,6 @@
 use std::ffi::*;
 use pdcurses::*;
 
-use nbplink::nbp::routing;
-
 pub struct Display {
     window: *mut WINDOW,
     messages: Vec<CString>,
@@ -69,12 +67,6 @@ impl Display {
 
             wmove(self.window, getmaxy(self.window) - 1, 0);
             refresh();
-        }
-    }
-
-    pub fn exit() {
-        unsafe {
-            endwin();
         }
     }
 }

@@ -1,4 +1,5 @@
 //! Implements KISS HLDC framing for communcation with TNCs that implement KISS protocol
+use std::io;
 
 ///Frame delimiter code, used to represent start and end of frames.
 pub const FEND: u8 = 0xC0;
@@ -35,16 +36,59 @@ pub const CMD_RETURN: u8 = 0xFF;
 /// use nbplink::kiss;
 ///
 /// let mut data = vec!();
-/// kiss::encode(['T', 'E', 'S', 'T'].iter().map(|chr| *chr as u8), &mut data, 0);
+/// let input: Vec<u8> = ['T', 'E', 'S', 'T'].iter().map(|chr| *chr as u8).collect();
+/// kiss::encode(&mut std::io::Cursor::new(input), &mut data, 0);
 /// assert!(data == vec!(kiss::FEND, kiss::CMD_DATA, 'T' as u8, 'E' as u8, 'S' as u8, 'T' as u8, kiss::FEND));
 /// ```
-pub fn encode<T>(data: T, encoded: &mut Vec<u8>, port: u8) where T: Iterator<Item=u8> {
+pub fn encode<R,W>(data: &mut R, encoded: &mut W, port: u8) -> io::Result<usize> where R: io::Read, W: io::Write {
     trace!("Encoding KISS frame for port {}", port);
 
-    let (reserved, _) = data.size_hint();
-    encoded.reserve(reserved + 3);
+    let mut written: usize = 0;
 
-    let encode = data.map(|byte| {
+    //Data frame command, port is high part of the nibble
+    match encoded.write_all(&[FEND, CMD_DATA | ((port & 0x0F) << 4)]) {
+        Ok(()) => written += 2,
+        Err(e) => {
+            error!("Unable to write bytes {:?}", e);
+            return Err(e);
+        }
+    }
+
+    //Process KISS frame in 256 byte increments
+    const SCRATCH_SIZE: usize = 256;
+    let mut scratch: [u8; SCRATCH_SIZE] = unsafe { ::std::mem::uninitialized() };
+
+    loop {
+        match data.read(&mut scratch) {
+            Ok(n) => {
+                match n {
+                    0 => break,
+                    _ => {
+                        match encode_part(&scratch[..n], encoded) {
+                            Ok(w) => written += w,
+                            Err(e) => return Err(e)
+                        }
+                    }
+                }
+            },
+            Err(e) => return Err(e)
+        }
+    }
+
+    match encoded.write_all(&[FEND]) {
+        Ok(()) => written += 1,
+        Err(e) => {
+            error!("Unable to write bytes {:?}", e);
+            return Err(e);
+        }
+    }
+
+    debug!("Encoded KISS frame of {} bytes for port {}", written, port);
+    Ok(written)
+}
+
+pub fn encode_part<W>(data: &[u8], encoded: &mut W) -> io::Result<usize> where W: io::Write {
+    let encode = data.iter().cloned().map(|byte| {
         match byte {
             FEND => (FESC, Some(TFEND)),
             FESC => (FESC, Some(TFESC)),
@@ -52,25 +96,21 @@ pub fn encode<T>(data: T, encoded: &mut Vec<u8>, port: u8) where T: Iterator<Ite
         }
     });
 
-    let encoded_start = encoded.len();
-    encoded.push(FEND);
-
-    //Data frame command, port is high part of the nibble
-    encoded.push(CMD_DATA | ((port & 0x0F) << 4));
-
+    let mut written = 0;
     for (b1, b2) in encode {
-        encoded.push(b1);
-
         match b2 {
-            Some(data) => encoded.push(data),
-            _ => ()
+            Some(data) => {
+                try!(encoded.write_all(&[b1, data]));
+                written += 2;
+            },
+            None => {
+                try!(encoded.write_all(&[b1]));
+                written += 1;
+            }
         }
     }
 
-    encoded.push(FEND);
-
-    let encoded_len = encoded.len() - encoded_start;
-    debug!("Encoded KISS frame of {} bytes for port {}", encoded_len, port);
+    Ok(written)
 }
 
 /// Encodes a command to be sent to the KISS TNC.
@@ -240,21 +280,23 @@ pub fn decode<T>(data: T, decoded: &mut Vec<u8>) -> Option<DecodedFrame> where T
 
 #[test]
 fn test_encode() {
+    use std::io::Cursor;
+
     {
         let mut data = vec!();
-        encode(['T', 'E', 'S', 'T'].iter().map(|chr| *chr as u8), &mut data, 0);
+        encode(&mut Cursor::new(['T', 'E', 'S', 'T'].iter().map(|chr| *chr as u8).collect::<Vec<_>>()), &mut data, 0);
         assert_eq!(data, vec!(FEND, CMD_DATA, 'T' as u8, 'E' as u8, 'S' as u8, 'T' as u8, FEND));
     }
 
     {
         let mut data = vec!();
-        encode(['H', 'E', 'L', 'L', 'O'].iter().map(|chr| *chr as u8), &mut data, 5);
+        encode(&mut Cursor::new(['H', 'E', 'L', 'L', 'O'].iter().map(|chr| *chr as u8).collect::<Vec<_>>()), &mut data, 5);
         assert_eq!(data, vec!(FEND, CMD_DATA | 0x50, 'H' as u8, 'E' as u8, 'L' as u8, 'L' as u8, 'O' as u8, FEND));
     }
 
     {
         let mut data = vec!();
-        encode([FEND, FESC].iter().map(|data| *data), &mut data, 0);
+        encode(&mut Cursor::new([FEND, FESC]), &mut data, 0);
         assert_eq!(data, vec!(FEND, CMD_DATA, FESC, TFEND, FESC, TFESC, FEND));
     }
 
@@ -279,11 +321,13 @@ fn test_encode() {
 
 #[cfg(test)]
 fn test_encode_decode_single<T>(source: T) where T: Iterator<Item=u8> {
+    use std::io::Cursor;
+
     let mut data = vec!();
     let mut decoded = vec!();
     let expected: Vec<u8> = source.collect();
 
-    encode(expected.iter().map(|x| *x), &mut data, 5);
+    encode(&mut Cursor::new(&expected), &mut data, 5);
     match decode(data.iter().cloned(), &mut decoded) {
         Some(result) => {
             assert_eq!(result.port, 5);
@@ -320,6 +364,8 @@ fn test_encode_decode() {
 
 #[test]
 fn test_empty_frame() {
+    use std::io::Cursor;
+
     let mut data = vec!();
     let expected: Vec<u8> = ['T', 'E', 'S', 'T'].iter().map(|chr| *chr as u8).collect();
 
@@ -327,7 +373,7 @@ fn test_empty_frame() {
     data.push(FEND);
     data.push(FEND);
 
-    encode(expected.iter().cloned(), &mut data, 0);
+    encode(&mut Cursor::new(&expected), &mut data, 0);
     
     let mut decoded = vec!();
     match decode(data.iter().cloned(), &mut decoded) {
@@ -344,15 +390,17 @@ fn test_empty_frame() {
 
 #[test]
 fn test_multi_frame() {
+    use std::io::Cursor;
+
     let expected_one: Vec<u8> = ['T', 'E', 'S', 'T'].iter().map(|chr| *chr as u8).collect();
     let expected_two: Vec<u8> = ['H', 'E', 'L', 'L', 'O'].iter().map(|chr| *chr as u8).collect();
     let expected_three = [FEND, FESC];
 
     let mut data = vec!();
 
-    encode(expected_one.iter().cloned(), &mut data, 0);
-    encode(expected_two.iter().cloned(), &mut data, 0);
-    encode(expected_three.iter().cloned(), &mut data, 0);
+    encode(&mut Cursor::new(&expected_one), &mut data, 0);
+    encode(&mut Cursor::new(&expected_two), &mut data, 0);
+    encode(&mut Cursor::new(&expected_three), &mut data, 0);
 
     test_decode_single(&mut data, &expected_one, 0);
     test_decode_single(&mut data, &expected_two, 0);

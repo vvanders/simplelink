@@ -330,7 +330,7 @@ fn send_frame(prn: &mut prn_id::PRN, input: &String, port: &mut io::Write) -> Re
             
             //Encode into kiss frame
             let mut kiss_frame = vec!();
-            kiss::encode(full_frame.iter().cloned(), &mut kiss_frame, 0);
+            kiss::encode(&mut io::Cursor::new(full_frame), &mut kiss_frame, 0).unwrap();
 
             trace!("Sending frame over the wire {:?}", &kiss_frame);
             return port.write_all(&kiss_frame).map_err(|err| err.kind())
