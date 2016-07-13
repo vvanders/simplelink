@@ -111,7 +111,6 @@ fn main() {
         
         let write_cmd = cmd.to_string() + "\n";
 
-        use std::io::Write;
         match write_port.write_all(write_cmd.as_bytes()) {
             Ok(_) => info!("Sending '{}' to TNC", cmd),
             Err(e) => {
@@ -168,7 +167,6 @@ fn main() {
             port.as_mut().unwrap()
         };
 
-        use std::io::Read;
         let read = match read_port.read(&mut pending[pending_bytes..]) {
             Ok(r) => r,
             Err(e) => {

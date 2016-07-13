@@ -1,6 +1,8 @@
 ///! Transmitting queue for outgoing frames
 use std::io;
 use nbp::frame;
+use nbp::prn_id;
+use nbp::routing;
 
 /// Maximum number of packets in flight
 pub const MAX_PACKET: usize = 256;
@@ -10,6 +12,8 @@ pub const BLOCK_SIZE: usize = 50 * 1024;
 pub const CONGEST_CONTROL: usize = 35 * 1024;
 /// Number of times a packet will attempt to retry
 pub const RETRY_COUNT: usize = 4;
+/// Number of milliseconds until we will resend an un-ack'd packet. Grows proportional to the number of retries.
+pub const RETRY_DELAY_MS: usize = 100;
 
 /// Queue of packets waiting to be recieved
 pub struct Queue {
@@ -25,7 +29,7 @@ pub enum QueueError {
     /// There was not enough space to store payload, packet was truncated
     Truncated,
     /// IO Error occurred.
-    IO(io::ErrorKind)
+    IO(io::Error)
 }
 
 /// Pending packet to be recieved
@@ -34,7 +38,7 @@ pub struct PendingPacket {
     /// Packet we're trying to send
     packet: frame::DataHeader,
     /// Last time in ms from when we sent it
-    last_send: u32,
+    next_send: usize,
     /// Number of retry attempts
     retry_count: u8,
     /// Byte offset for our payload packet
@@ -82,7 +86,7 @@ impl Queue {
                 },
                 Err(e) => {
                     error!("Tried to read bytes but IO error occurred: {:?}", e);
-                    err = Err(QueueError::IO(e.kind()));
+                    err = Err(QueueError::IO(e));
                     break;
                 }
             }
@@ -95,7 +99,7 @@ impl Queue {
 
         self.pending.push(PendingPacket {
             packet: header,
-            last_send: 0,
+            next_send: RETRY_DELAY_MS,
             retry_count: 0,
             data_offset: data_start
         });
@@ -113,6 +117,26 @@ impl Queue {
     }
 }
 
+#[cfg(test)]
+fn create_sample_packet(size: usize) -> (frame::DataHeader, Vec<u8>) {
+    let mut prn = prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
+    let mut data = (0..256).collect::<Vec<u8>>();
+    let callsign = prn.callsign;
+
+    let header = frame::new_data(&mut prn, &[callsign, routing::ADDRESS_SEPARATOR, callsign], data.len()).unwrap();
+
+    (header, data)
+}
+
 #[test]
-fn test_tick() {
+fn test_equeue() {
+    let (header, data) = create_sample_packet(256);
+
+    let mut queue = new();
+
+    use std::io;
+    match queue.enqueue(header, &mut io::Cursor::new(&data)) {
+        Ok(()) => (),
+        Err(e) => assert!(false)
+    };
 }
