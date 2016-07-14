@@ -13,7 +13,7 @@ pub const MTU: usize = 1500;
 pub const MAX_PACKET_SIZE: usize = MTU + 4 + 4 * 18 + 2;
 
 /// Represents a single NBP Ack Frame
-#[derive(Copy,Clone)]
+#[derive(Copy,Clone,Eq,PartialEq,Debug)]
 pub struct AckHeader {
     /// Pseudo-Random unique identifier that this packet is an ack for.
     pub prn: u32,
@@ -22,7 +22,7 @@ pub struct AckHeader {
 }
 
 /// Represents a single NBP Data Frame
-#[derive(Copy,Clone)]
+#[derive(Copy,Clone,Eq,PartialEq,Debug)]
 pub struct DataHeader {
     /// Pseudo-Random unique identifier for this packet. This is combination of PRN + XOR of callsign.
     pub prn: u32,
