@@ -1,5 +1,7 @@
 ///! Transmitting queue for outgoing frames
 use std::io;
+use std::fmt;
+use rand;
 use nbp::frame;
 use nbp::prn_id;
 use nbp::routing;
@@ -38,7 +40,7 @@ pub struct PendingPacket {
     /// Last time in ms from when we sent it
     next_send: usize,
     /// Number of retry attempts
-    retry_count: u8,
+    retry_count: usize,
     /// Byte offset for our payload packet
     data_offset: usize
 }
@@ -83,17 +85,11 @@ impl Queue {
         Ok(())
     }
 
+    // Called when we recieve an ack packet
     pub fn ack_recv(&mut self, prn: u32) -> bool {
         match self.pending.iter().position(|pending| pending.packet.prn == prn) {
             Some(idx) => {
-                //Erase the data associated
-                let data_start = self.pending[idx].data_offset;
-                let data_end = data_start + self.pending[idx].packet.payload_size;
-                self.data.drain(data_start..data_end);
-                
-                //Remove packet
-                self.pending.remove(idx);
-
+                self.discard(idx);
                 trace!("ACK for {}, buffer at {} bytes", prn, self.data.len());
 
                 true
@@ -105,13 +101,71 @@ impl Queue {
         } 
     }
 
-    //Check any packets that have expired, resend is called on packets we want to retry, discard on packets that have exceeded the retry count
-    pub fn tick<E,R,D>(&mut self, elapsed_ms: u32, retry: R, discard: D) -> Result<(),E>
+    // Check any packets that have expired, resend is called on packets we want to retry, discard on packets that have exceeded the retry count
+    pub fn tick<R,D,E>(&mut self, elapsed_ms: usize, mut retry: R, mut discard: D) -> Result<(),E>
         where
-            R: Fn(&frame::DataHeader, &[u8]) -> Result<(),E>,
-            D: Fn(&frame::DataHeader)
+            R: FnMut(&frame::DataHeader, &[u8]) -> Result<(),E>,
+            D: FnMut(&frame::DataHeader),
+            E: fmt::Debug
     {
+        trace!("Ticking send queue for {} ms", elapsed_ms);
+        let mut idx = 0;
+        while idx < self.pending.len() {
+            if self.pending[idx].next_send <= elapsed_ms {
+                if self.pending[idx].retry_count >= RETRY_COUNT {
+                    trace!("Packet {} has exceeded retry count, discarding", self.pending[idx].packet.prn);
+
+                    discard(&self.pending[idx].packet);
+
+                    //Discard our packet
+                    self.discard(idx);
+
+                    //Since we removed this index we can keep idx the same and continue with the next item
+                } else {
+                    trace!("Retrying {} packet with retry count {}", self.pending[idx].packet.prn, self.pending[idx].retry_count);
+
+                    //Note that we increment our retry count here in case something about this packet prevents it
+                    //from being sent so we won't hang the whole link
+                    self.pending[idx].retry_count += 1;
+
+                    match retry(&self.pending[idx].packet, self.get_packet_data(&self.pending[idx])) {
+                        Ok(()) => (),
+                        Err(e) => {
+                            trace!("Error retrying packet {:?}, incrementing retry counter and aborting", &e);
+                            return Err(e)
+                        }
+                    }
+
+                    //Determine when we want to retry again. Note that we randomize so two transmitters won't collide
+                    use rand::distributions::IndependentSample;
+                    let rnd = rand::distributions::Range::new(0.0, 1.0).ind_sample(&mut rand::thread_rng());
+                    self.pending[idx].next_send = ((1.0 + self.pending[idx].retry_count as f32 * rand::random::<f32>()) * RETRY_DELAY_MS as f32) as usize;
+
+                    idx += 1;
+                }
+            } else {
+                self.pending[idx].next_send -= elapsed_ms;
+                trace!("Ticking {} {}ms remaining", self.pending[idx].packet.prn, self.pending[idx].next_send);
+
+                idx += 1;
+            }
+        }
+
         Ok(())
+    }
+
+    fn discard(&mut self, idx: usize) {
+        //Erase the data associated
+        let data_start = self.pending[idx].data_offset;
+        let data_end = data_start + self.pending[idx].packet.payload_size;
+        self.data.drain(data_start..data_end);
+        
+        //Remove packet
+        self.pending.remove(idx);
+    }
+
+    fn get_packet_data<'a>(&'a self, pending: &'a PendingPacket) -> &'a [u8] {
+        &self.data[pending.data_offset..pending.data_offset+pending.packet.payload_size]
     }
 }
 
@@ -206,4 +260,66 @@ fn test_discard() {
             Err(_) => ()
         }
     }
+}
+
+#[test]
+fn test_empty_tick() {
+    let mut queue = new();
+
+    let mut retry_count = 0;
+    let mut discard_count = 0;
+
+    let result = queue.tick::<_,_,io::ErrorKind>(0, 
+        |_, _| {
+            retry_count += 1;
+            Ok(())
+        },
+        |_| {
+            discard_count += 1;
+        });
+
+    assert!(result.is_ok());
+    assert_eq!(retry_count, 0);
+    assert_eq!(discard_count, 0);
+}
+
+#[test]
+fn test_tick_lifetime() {
+    let mut prn = prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
+    let mut queue = new();
+    let (header, data) = create_sample_packet(&mut prn, 1);
+
+    let header_prn = header.prn;
+
+    let mut retry_count = 0;
+    let mut discard_count = 0;
+
+    assert!(queue.enqueue(header, &data).is_ok());
+
+    //Calculate the maximum retry ms we need for a single packet to discard
+    fn calc_retry(count: usize) -> usize {
+        if count == 0 {
+            return RETRY_DELAY_MS
+        } else {
+            return (1+count) * RETRY_DELAY_MS + calc_retry(count-1)
+        }
+    }
+
+    for _ in 0..(calc_retry(RETRY_COUNT) / 50) + 1 {
+        let result = queue.tick::<_,_,io::ErrorKind>(50,
+            |header,_| {
+                assert_eq!(header.prn, header_prn);
+                retry_count += 1;
+                Ok(())
+            },
+            |header| {
+                assert_eq!(header.prn, header_prn);
+                discard_count += 1;
+            });
+
+        assert!(result.is_ok());
+    }
+
+    assert_eq!(retry_count, RETRY_COUNT);
+    assert_eq!(discard_count, 1);
 }

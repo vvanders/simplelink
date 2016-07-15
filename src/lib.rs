@@ -4,6 +4,7 @@ extern crate byteorder;
 extern crate log;
 extern crate fern;
 extern crate time;
+extern crate rand;
 
 pub mod kiss;
 pub mod nbp;
