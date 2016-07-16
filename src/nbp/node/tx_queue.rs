@@ -108,20 +108,15 @@ impl Queue {
             D: FnMut(&frame::DataHeader),
             E: fmt::Debug
     {
-        trace!("Ticking send queue for {} ms", elapsed_ms);
+        trace!("Ticking send queue for {}ms", elapsed_ms);
         let mut idx = 0;
         while idx < self.pending.len() {
             if self.pending[idx].next_send <= elapsed_ms {
-                if self.pending[idx].retry_count >= RETRY_COUNT {
-                    trace!("Packet {} has exceeded retry count, discarding", self.pending[idx].packet.prn);
+                let will_discard = self.pending[idx].retry_count >= RETRY_COUNT || self.data.len() > CONGEST_CONTROL;
+                let will_retry = self.pending[idx].retry_count < RETRY_COUNT;
 
-                    discard(&self.pending[idx].packet);
-
-                    //Discard our packet
-                    self.discard(idx);
-
-                    //Since we removed this index we can keep idx the same and continue with the next item
-                } else {
+                //If we're going to retry do it first in case we're in a congestion scenario
+                if will_retry {
                     trace!("Retrying {} packet with retry count {}", self.pending[idx].packet.prn, self.pending[idx].retry_count);
 
                     //Note that we increment our retry count here in case something about this packet prevents it
@@ -140,7 +135,24 @@ impl Queue {
                     use rand::distributions::IndependentSample;
                     let rnd = rand::distributions::Range::new(0.0, 1.0).ind_sample(&mut rand::thread_rng());
                     self.pending[idx].next_send = ((1.0 + self.pending[idx].retry_count as f32 * rand::random::<f32>()) * RETRY_DELAY_MS as f32) as usize;
+                }
 
+                //Discard our packet if we've flagged it for discarding
+                if will_discard {
+                    if self.data.len() > CONGEST_CONTROL {
+                        trace!("Congestion control underway, discarding packet after last retry");
+                    } else {
+                        trace!("Packet {} has exceeded retry count, discarding", self.pending[idx].packet.prn);
+                    }
+
+                    discard(&self.pending[idx].packet);
+
+                    //Discard our packet
+                    self.discard(idx);
+                }
+
+                //If we didn't discard advance to the next packet, otherwise we can keep idx the same and continue with the next item
+                if !will_discard {
                     idx += 1;
                 }
             } else {
@@ -162,6 +174,13 @@ impl Queue {
         
         //Remove packet
         self.pending.remove(idx);
+
+        //Update offsets
+        for packet in &mut self.pending {
+            if packet.data_offset >= data_end {
+                packet.data_offset -= data_end - data_start;
+            }
+        }
     }
 
     fn get_packet_data<'a>(&'a self, pending: &'a PendingPacket) -> &'a [u8] {
@@ -305,6 +324,7 @@ fn test_tick_lifetime() {
         }
     }
 
+    //Force a retry and discard
     for _ in 0..(calc_retry(RETRY_COUNT) / 50) + 1 {
         let result = queue.tick::<_,_,io::ErrorKind>(50,
             |header,_| {
@@ -322,4 +342,146 @@ fn test_tick_lifetime() {
 
     assert_eq!(retry_count, RETRY_COUNT);
     assert_eq!(discard_count, 1);
+}
+
+#[test]
+fn test_tick_bad_io() {
+    let mut prn = prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
+    let mut queue = new();
+    let (header, data) = create_sample_packet(&mut prn, 1);
+
+    let mut retry_count = 0;
+    let mut discard_count = 0;
+
+    assert!(queue.enqueue(header, &data).is_ok());
+
+    //Force all packets to try and eventually discard
+    for _ in 0..RETRY_COUNT+1 {
+        let is_discard = retry_count == RETRY_COUNT;
+
+        let result = queue.tick(RETRY_DELAY_MS * (1 + RETRY_COUNT),
+            |_,_| {
+                retry_count += 1;
+                Err(io::ErrorKind::NotConnected)
+            },
+            |_| {
+                discard_count += 1;
+            });
+
+        if !is_discard {
+            assert!(result.is_err());
+        } else {
+            assert!(result.is_ok());
+        }
+    }
+
+    assert_eq!(retry_count, RETRY_COUNT);
+    assert_eq!(discard_count, 1);
+}
+
+#[test]
+fn test_discard_mixed() {
+    let mut prn = prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
+    let packets = (0..5).map(|_| create_sample_packet(&mut prn, 8)).collect::<Vec<_>>();
+
+    let mut queue = new();
+
+    for &(ref header, ref data) in &packets {
+        queue.enqueue(*header, data);
+    }
+
+    assert_eq!(queue.data.len(), queue.pending.len() * 8);
+
+    for i in 0..queue.pending.len() {
+        assert_eq!(queue.pending[i].data_offset, i*8);
+    }
+
+    let ack_prn = queue.pending[1].packet.prn;
+    queue.ack_recv(ack_prn);
+
+    assert_eq!(queue.data.len(), queue.pending.len() * 8);
+
+    for i in 0..queue.pending.len() {
+        assert_eq!(queue.pending[i].data_offset, i*8);
+    }
+}
+
+#[test]
+fn test_multi_ack() {
+    let mut prn = prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
+    let discard = (0..5).map(|_| create_sample_packet(&mut prn, 8)).collect::<Vec<_>>();
+    let ack = (0..10).map(|_| create_sample_packet(&mut prn, 16)).collect::<Vec<_>>();
+
+    let mut queue = new();
+
+    //Add all the ack and discard packets
+    for &(ref header, ref data) in &discard {
+        queue.enqueue(*header, data);
+    }
+
+    for &(ref header, ref data) in &ack {
+        queue.enqueue(*header, data);
+    }
+
+    let mut discard_count = 0;
+
+    //Ack every ack packet
+    for &(ref header, _) in &ack {
+        queue.ack_recv(header.prn);
+
+        let result = queue.tick::<_,_,io::ErrorKind>(1,
+            |_,_| {
+                Ok(())
+            },
+            |_| {
+                discard_count += 1;
+            });
+
+        assert!(result.is_ok());
+    }
+
+    //Time out the discard packets
+    for _ in 0..RETRY_COUNT+1 {
+        let result = queue.tick::<_,_,io::ErrorKind>(RETRY_DELAY_MS * (1 + RETRY_COUNT),
+            |_,_| {
+                Ok(())
+            },
+            |header| {
+                assert!(discard.iter().any(|&(ref discard,_)| discard.prn == header.prn));
+                assert_eq!(header.payload_size, 8);
+                discard_count += 1;
+            });
+    }
+
+    assert_eq!(discard_count, discard.len());
+}
+
+#[test]
+fn test_congestion() {
+    let mut prn = prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
+    let mut queue = new();
+
+    //Create 40 packets 1024 in length to force congestion control
+    let packets = (0..40).map(|i| create_packet_with(&mut prn, (0..1024).map(|_| i as u8))).collect::<Vec<_>>();
+
+    for (header, data) in packets {
+        queue.enqueue(header, &data);
+    }
+
+    let mut retry_count = 0;
+    let mut discard_count = 0;
+
+    queue.tick::<_,_,io::ErrorKind>(RETRY_DELAY_MS,
+        |_,_| {
+            retry_count += 1;
+            Ok(())
+        },
+        |_| {
+            discard_count += 1;
+        }).unwrap();
+
+    assert_eq!(retry_count, 40);
+    
+    //Only 5 should discard before we drop out of congestion control
+    assert_eq!(discard_count, 5);
 }
