@@ -197,7 +197,7 @@ pub fn from_bytes<T>(bytes: &mut T, out_payload: &mut [u8], size: usize) -> Resu
             crc16::update_u8(*byte, crc)
         });
 
-        debug!("Read DATA frame with PRN {} Callsign {}", prn, routing::format_route(addr));
+        debug!("Read DATA frame with PRN {} Callsign {}", prn, routing::format_route(&addr));
 
         Frame::Data(DataHeader{
             prn: prn,
@@ -384,26 +384,36 @@ fn test_addr_permuatations() {
         //Build address
         let src_addr = address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
 
-        let mut addr: Vec<u32> = (0..size).into_iter()
-            .map(|i| {
-                if i > 9 {
-                    ['T', 'E', 'S', 'T', address::symbol_to_character(i / 10), address::symbol_to_character(i % 10), '0']
-                } else {
-                    ['T', 'E', 'S', 'T', address::symbol_to_character(i), '0', '0']
-                }
-            })
-            .filter_map(|addr| address::encode(addr))
-            .chain(iter::once(routing::ADDRESS_SEPARATOR))
-            .chain(iter::once(src_addr))
-            .collect();
-
         for i in 0..size {
+            fn gen_addr(num: u8) -> [char; 7] {
+                if num > 9 {
+                    ['T', 'E', 'S', 'T', address::symbol_to_character(num / 10), address::symbol_to_character(num % 10), '0']
+                } else {
+                    ['T', 'E', 'S', 'T', address::symbol_to_character(num), '0', '0']
+                }
+            }
+
+            let pre_sep = (0..i).into_iter()
+                .map(|i| {
+                    gen_addr(i)
+                })
+                .filter_map(|addr| address::encode(addr));
+
+            let post_sep = (0..size-i).into_iter()
+                .rev()
+                .map(|i| {
+                    gen_addr(i)
+                })
+                .filter_map(|addr| address::encode(addr));
+
+            let mut addr: Vec<u32> = iter::once(src_addr)
+                .chain(pre_sep)
+                .chain(iter::once(routing::ADDRESS_SEPARATOR))
+                .chain(post_sep)
+                .collect();
+
             let packet = [1, 2, 3, 4, 5];
             serialize_deserialize_packet(&addr, &packet);
-
-            //Advance the route
-            routing::advance(&mut addr);
-            assert_eq!(addr[(size - i) as usize - 1], routing::ADDRESS_SEPARATOR);
         }
     }
 }

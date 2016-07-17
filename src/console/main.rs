@@ -248,7 +248,7 @@ fn read_frame(pending: &mut Vec<u8>, pending_bytes: &mut usize) -> Option<String
                 Ok(nbp_frame) => {
                     match nbp_frame {
                         frame::Frame::Data(header) => {
-                            let source = routing::format_route(header.address_route);
+                            let source = routing::format_route(&header.address_route);
 
                             match std::str::from_utf8(&nbp_payload[..header.payload_size]) {
                                 Ok(msg) => {
