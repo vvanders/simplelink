@@ -247,10 +247,10 @@ fn read_frame(pending: &mut Vec<u8>, pending_bytes: &mut usize) -> Option<String
             let result = match frame::from_bytes(&mut io::Cursor::new(&kiss_frame), &mut nbp_payload, frame.payload_size) {
                 Ok(nbp_frame) => {
                     match nbp_frame {
-                        frame::Frame::Data(header) => {
+                        (frame::Frame::Data(header), size) => {
                             let source = routing::format_route(&header.address_route);
 
-                            match std::str::from_utf8(&nbp_payload[..header.payload_size]) {
+                            match std::str::from_utf8(&nbp_payload[..size]) {
                                 Ok(msg) => {
                                     Some(format!("{}: {}", source, msg.trim()))
                                 },
@@ -260,7 +260,7 @@ fn read_frame(pending: &mut Vec<u8>, pending_bytes: &mut usize) -> Option<String
                                 }
                             }
                         },
-                        frame::Frame::Ack(header) => {
+                        (frame::Frame::Ack(header),_) => {
                             Some(format!("{}: {} ACK", header.prn, address::decode(header.src_addr).into_iter().cloned().collect::<String>()))
                         }
                     }
@@ -314,7 +314,7 @@ fn send_frame(prn: &mut prn_id::PRN, input: &String, port: &mut io::Write) -> Re
 
     match dest {
         Ok(dest) => {
-            let frame = match frame::new_data(prn, &dest, message.len()) {
+            let frame = match frame::new_data(prn, &dest) {
                 Err(e) => {
                     error!("Unable to create frame: {:?}", e);
                     return Ok(())

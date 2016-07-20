@@ -284,19 +284,19 @@ fn test_encode() {
 
     {
         let mut data = vec!();
-        encode(&mut Cursor::new(['T', 'E', 'S', 'T'].iter().map(|chr| *chr as u8).collect::<Vec<_>>()), &mut data, 0);
+        encode(&mut Cursor::new(['T', 'E', 'S', 'T'].iter().map(|chr| *chr as u8).collect::<Vec<_>>()), &mut data, 0).unwrap();
         assert_eq!(data, vec!(FEND, CMD_DATA, 'T' as u8, 'E' as u8, 'S' as u8, 'T' as u8, FEND));
     }
 
     {
         let mut data = vec!();
-        encode(&mut Cursor::new(['H', 'E', 'L', 'L', 'O'].iter().map(|chr| *chr as u8).collect::<Vec<_>>()), &mut data, 5);
+        encode(&mut Cursor::new(['H', 'E', 'L', 'L', 'O'].iter().map(|chr| *chr as u8).collect::<Vec<_>>()), &mut data, 5).unwrap();
         assert_eq!(data, vec!(FEND, CMD_DATA | 0x50, 'H' as u8, 'E' as u8, 'L' as u8, 'L' as u8, 'O' as u8, FEND));
     }
 
     {
         let mut data = vec!();
-        encode(&mut Cursor::new([FEND, FESC]), &mut data, 0);
+        encode(&mut Cursor::new([FEND, FESC]), &mut data, 0).unwrap();
         assert_eq!(data, vec!(FEND, CMD_DATA, FESC, TFEND, FESC, TFESC, FEND));
     }
 
@@ -327,7 +327,7 @@ fn test_encode_decode_single<T>(source: T) where T: Iterator<Item=u8> {
     let mut decoded = vec!();
     let expected: Vec<u8> = source.collect();
 
-    encode(&mut Cursor::new(&expected), &mut data, 5);
+    encode(&mut Cursor::new(&expected), &mut data, 5).unwrap();
     match decode(data.iter().cloned(), &mut decoded) {
         Some(result) => {
             assert_eq!(result.port, 5);
@@ -373,7 +373,7 @@ fn test_empty_frame() {
     data.push(FEND);
     data.push(FEND);
 
-    encode(&mut Cursor::new(&expected), &mut data, 0);
+    encode(&mut Cursor::new(&expected), &mut data, 0).unwrap();
     
     let mut decoded = vec!();
     match decode(data.iter().cloned(), &mut decoded) {
@@ -398,9 +398,9 @@ fn test_multi_frame() {
 
     let mut data = vec!();
 
-    encode(&mut Cursor::new(&expected_one), &mut data, 0);
-    encode(&mut Cursor::new(&expected_two), &mut data, 0);
-    encode(&mut Cursor::new(&expected_three), &mut data, 0);
+    encode(&mut Cursor::new(&expected_one), &mut data, 0).unwrap();
+    encode(&mut Cursor::new(&expected_two), &mut data, 0).unwrap();
+    encode(&mut Cursor::new(&expected_three), &mut data, 0).unwrap();
 
     test_decode_single(&mut data, &expected_one, 0);
     test_decode_single(&mut data, &expected_two, 0);

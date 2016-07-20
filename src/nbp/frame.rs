@@ -27,9 +27,7 @@ pub struct DataHeader {
     /// Pseudo-Random unique identifier for this packet. This is combination of PRN + XOR of callsign.
     pub prn: u32,
     /// Forward and return address routing. Each path can contain up to 16 addresses plus a single separator.
-    pub address_route: routing::Route,
-    /// Size of the payload 
-    pub payload_size: usize
+    pub address_route: routing::Route
 }
 
 /// All possible NBP frames
@@ -55,8 +53,6 @@ pub enum ReadError {
 /// Error cases for encoding a packet
 #[derive(Debug)]
 pub enum EncodeError {
-    /// Data packet was more than 1500 bytes
-    Truncated,
     /// Dest address was more than 15 stations
     AddressTooLong,
     /// Address didn't contain a source -> dest separator
@@ -79,7 +75,7 @@ pub fn new_ack(prn: u32, src_addr: u32) -> AckHeader {
 }
 
 /// Constructs a new data frame
-pub fn new_data(prn: &mut prn_id::PRN, dest: &[u32], payload_size: usize) -> Result<DataHeader, EncodeError> {
+pub fn new_data(prn: &mut prn_id::PRN, dest: &[u32]) -> Result<DataHeader, EncodeError> {
     let mut addr: routing::Route = [0; routing::MAX_LENGTH];
 
     if dest.len() > routing::MAX_LENGTH {
@@ -98,14 +94,9 @@ pub fn new_data(prn: &mut prn_id::PRN, dest: &[u32], payload_size: usize) -> Res
         return Err(EncodeError::AddressSeparatorNotFound)
     }
 
-    if payload_size > MTU {
-        return Err(EncodeError::Truncated)
-    }
-
     Ok(DataHeader {
         prn: prn.next(),
-        address_route: addr,
-        payload_size: payload_size
+        address_route: addr
     })
 }
 
@@ -117,7 +108,7 @@ fn read_u32<T>(bytes: &mut T, crc: &mut crc16::CRC) -> Result<u32, ReadError> wh
 }
 
 /// Read in a frame from a series of bytes.
-pub fn from_bytes<T>(bytes: &mut T, out_payload: &mut [u8], size: usize) -> Result<Frame, ReadError> where T: io::Read {
+pub fn from_bytes<T>(bytes: &mut T, out_payload: &mut [u8], size: usize) -> Result<(Frame, usize), ReadError> where T: io::Read {
     trace!("Reading frame from bytes");
 
     let mut crc = crc16::new();
@@ -134,10 +125,10 @@ pub fn from_bytes<T>(bytes: &mut T, out_payload: &mut [u8], size: usize) -> Resu
 
         debug!("Read ACK frame with PRN {} Callsign {}", prn, address::format_addr(addr));
 
-        Frame::Ack(AckHeader {
+        (Frame::Ack(AckHeader {
             prn: prn,
             src_addr: addr
-        })
+        }), 0)
     } else {
         //Scan in our address. We're looking for u32+, 0x0, u32+, 0x0.
         let mut addr_marker = 0;
@@ -199,11 +190,10 @@ pub fn from_bytes<T>(bytes: &mut T, out_payload: &mut [u8], size: usize) -> Resu
 
         debug!("Read DATA frame with PRN {} Callsign {}", prn, routing::format_route(&addr));
 
-        Frame::Data(DataHeader{
+        (Frame::Data(DataHeader{
             prn: prn,
-            address_route: addr,
-            payload_size: payload_size
-        })
+            address_route: addr
+        }), payload_size)
     };
 
     crc = crc16::finish(crc);
@@ -265,8 +255,8 @@ pub fn to_bytes<T>(bytes: &mut T, frame: &Frame, payload: Option<&[u8]>) -> Resu
             //Handle the actual payload
             match payload {
                 Some(data) => {
-                    try!(bytes.write(data).map_err(|e| WriteError::IO(e)));
-                    size += data_frame.payload_size;
+                    try!(bytes.write_all(data).map_err(|e| WriteError::IO(e)));
+                    size += data.len();
 
                     for byte in data {
                         crc = crc16::update_u8(*byte, crc);
@@ -312,7 +302,7 @@ fn serialize_ack_test() {
     let mut reader = Cursor::new(data);
     let mut payload = [0; MTU];
     match from_bytes(&mut reader, &mut payload, count).unwrap() {
-        Frame::Ack(read_ack) => {
+        (Frame::Ack(read_ack),_) => {
             assert_eq!(read_ack.prn, ack.prn);
             assert_eq!(read_ack.src_addr, ack.src_addr);
         }
@@ -326,7 +316,7 @@ use std::iter;
 #[cfg(test)]
 fn serialize_packet(dest: &[u32], payload: &[u8]) -> Vec<u8> {
     let mut prn = prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
-    let data_packet = new_data(&mut prn, dest, payload.len()).unwrap();
+    let data_packet = new_data(&mut prn, dest,).unwrap();
 
     let mut data = vec!();
 
@@ -346,8 +336,8 @@ fn serialize_deserialize_packet(dest: &[u32], payload: &[u8]) {
     let mut reader = Cursor::new(data);
     let mut read_payload = [0; MTU];
     match from_bytes(&mut reader, &mut read_payload, count).unwrap() {
-        Frame::Data(read_data) => {
-            assert_eq!(read_data.payload_size, payload.len());
+        (Frame::Data(read_data), size) => {
+            assert_eq!(size, payload.len());
             for (i, byte) in payload.iter().cloned().enumerate() {
                 assert_eq!(read_payload[i], byte);
             }
@@ -406,7 +396,7 @@ fn test_addr_permuatations() {
                 })
                 .filter_map(|addr| address::encode(addr));
 
-            let mut addr: Vec<u32> = iter::once(src_addr)
+            let addr: Vec<u32> = iter::once(src_addr)
                 .chain(pre_sep)
                 .chain(iter::once(routing::ADDRESS_SEPARATOR))
                 .chain(post_sep)

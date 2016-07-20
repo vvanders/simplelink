@@ -1,10 +1,7 @@
 ///! Transmitting queue for outgoing frames
-use std::io;
 use std::fmt;
 use rand;
 use nbp::frame;
-use nbp::prn_id;
-use nbp::routing;
 
 /// Maximum number of packets in flight
 pub const MAX_PACKET: usize = 256;
@@ -25,11 +22,10 @@ pub struct Queue {
     data: Vec<u8>
 }
 
+#[derive(Debug)]
 pub enum QueueError {
     /// Congestion control is underway and this frame was immediately discarded
-    Discarded,
-    // Header payload size does not match actual payload
-    HeaderMismatch
+    Discarded
 }
 
 /// Pending packet to be recieved
@@ -42,7 +38,9 @@ pub struct PendingPacket {
     /// Number of retry attempts
     retry_count: usize,
     /// Byte offset for our payload packet
-    data_offset: usize
+    data_offset: usize,
+    /// Size of our data packet
+    data_size : usize
 }
 
 /// Constructs a new queue
@@ -63,11 +61,6 @@ impl Queue {
             return Err(QueueError::Discarded);
         }
 
-        if header.payload_size != payload.len() {
-            error!("Mismatched payload sizes for packet was {} expected {}", payload.len(), header.payload_size);
-            return Err(QueueError::HeaderMismatch);
-        }
-        
         //Store where we started reading data so we can move our copy back if it fails
         let data_start = self.data.len();
 
@@ -77,7 +70,8 @@ impl Queue {
             packet: header,
             next_send: RETRY_DELAY_MS,
             retry_count: 0,
-            data_offset: data_start
+            data_offset: data_start,
+            data_size: payload.len()
         });
 
         trace!("Queued packet, buffer at {} of {} bytes", self.data.len(), BLOCK_SIZE);
@@ -105,7 +99,7 @@ impl Queue {
     pub fn tick<R,D,E>(&mut self, elapsed_ms: usize, mut retry: R, mut discard: D) -> Result<(),E>
         where
             R: FnMut(&frame::DataHeader, &[u8]) -> Result<(),E>,
-            D: FnMut(&frame::DataHeader),
+            D: FnMut(&frame::DataHeader, &[u8]),
             E: fmt::Debug
     {
         trace!("Ticking send queue for {}ms", elapsed_ms);
@@ -134,7 +128,7 @@ impl Queue {
                     //Determine when we want to retry again. Note that we randomize so two transmitters won't collide
                     use rand::distributions::IndependentSample;
                     let rnd = rand::distributions::Range::new(0.0, 1.0).ind_sample(&mut rand::thread_rng());
-                    self.pending[idx].next_send = ((1.0 + self.pending[idx].retry_count as f32 * rand::random::<f32>()) * RETRY_DELAY_MS as f32) as usize;
+                    self.pending[idx].next_send = ((1.0 + self.pending[idx].retry_count as f32 * rnd) * RETRY_DELAY_MS as f32) as usize;
                 }
 
                 //Discard our packet if we've flagged it for discarding
@@ -145,7 +139,7 @@ impl Queue {
                         trace!("Packet {} has exceeded retry count, discarding", self.pending[idx].packet.prn);
                     }
 
-                    discard(&self.pending[idx].packet);
+                    discard(&self.pending[idx].packet, self.get_packet_data(&self.pending[idx]));
 
                     //Discard our packet
                     self.discard(idx);
@@ -169,7 +163,7 @@ impl Queue {
     fn discard(&mut self, idx: usize) {
         //Erase the data associated
         let data_start = self.pending[idx].data_offset;
-        let data_end = data_start + self.pending[idx].packet.payload_size;
+        let data_end = data_start + self.pending[idx].data_size;
         self.data.drain(data_start..data_end);
         
         //Remove packet
@@ -184,26 +178,33 @@ impl Queue {
     }
 
     fn get_packet_data<'a>(&'a self, pending: &'a PendingPacket) -> &'a [u8] {
-        &self.data[pending.data_offset..pending.data_offset+pending.packet.payload_size]
+        &self.data[pending.data_offset..pending.data_offset+pending.data_size]
     }
 }
 
 #[cfg(test)]
+use std::io;
+#[cfg(test)]
+use nbp::prn_id;
+#[cfg(test)]
+use nbp::routing;
+
+#[cfg(test)]
 fn create_sample_packet(prn: &mut prn_id::PRN, size: u32) -> (frame::DataHeader, Vec<u8>) {
-    let mut data = (0..size).map(|value| value as u8).collect::<Vec<u8>>();
+    let data = (0..size).map(|value| value as u8).collect::<Vec<u8>>();
     let callsign = prn.callsign;
 
-    let header = frame::new_data(prn, &[callsign, routing::ADDRESS_SEPARATOR, callsign], data.len()).unwrap();
+    let header = frame::new_data(prn, &[callsign, routing::ADDRESS_SEPARATOR, callsign]).unwrap();
 
     (header, data)
 }
 
 #[cfg(test)]
 fn create_packet_with<T>(prn: &mut prn_id::PRN, data: T) -> (frame::DataHeader, Vec<u8>) where T: Iterator<Item=u8> {
-    let mut data = data.collect::<Vec<u8>>();
+    let data = data.collect::<Vec<u8>>();
     let callsign = prn.callsign;
 
-    let header = frame::new_data(prn, &[callsign, routing::ADDRESS_SEPARATOR, callsign], data.len()).unwrap();
+    let header = frame::new_data(prn, &[callsign, routing::ADDRESS_SEPARATOR, callsign]).unwrap();
 
     (header, data)
 }
@@ -252,8 +253,7 @@ fn test_discard() {
             Ok(()) => assert!(false),
             Err(e) => {
                 match e {
-                    QueueError::Discarded => (),
-                    _ => assert!(false)
+                    QueueError::Discarded => ()
                 }
             }
         }
@@ -293,7 +293,7 @@ fn test_empty_tick() {
             retry_count += 1;
             Ok(())
         },
-        |_| {
+        |_,_| {
             discard_count += 1;
         });
 
@@ -332,7 +332,7 @@ fn test_tick_lifetime() {
                 retry_count += 1;
                 Ok(())
             },
-            |header| {
+            |header,_| {
                 assert_eq!(header.prn, header_prn);
                 discard_count += 1;
             });
@@ -364,7 +364,7 @@ fn test_tick_bad_io() {
                 retry_count += 1;
                 Err(io::ErrorKind::NotConnected)
             },
-            |_| {
+            |_,_| {
                 discard_count += 1;
             });
 
@@ -387,7 +387,7 @@ fn test_discard_mixed() {
     let mut queue = new();
 
     for &(ref header, ref data) in &packets {
-        queue.enqueue(*header, data);
+        queue.enqueue(*header, data).unwrap();
     }
 
     assert_eq!(queue.data.len(), queue.pending.len() * 8);
@@ -416,11 +416,11 @@ fn test_multi_ack() {
 
     //Add all the ack and discard packets
     for &(ref header, ref data) in &discard {
-        queue.enqueue(*header, data);
+        queue.enqueue(*header, data).unwrap();
     }
 
     for &(ref header, ref data) in &ack {
-        queue.enqueue(*header, data);
+        queue.enqueue(*header, data).unwrap();
     }
 
     let mut discard_count = 0;
@@ -433,7 +433,7 @@ fn test_multi_ack() {
             |_,_| {
                 Ok(())
             },
-            |_| {
+            |_,_| {
                 discard_count += 1;
             });
 
@@ -442,15 +442,15 @@ fn test_multi_ack() {
 
     //Time out the discard packets
     for _ in 0..RETRY_COUNT+1 {
-        let result = queue.tick::<_,_,io::ErrorKind>(RETRY_DELAY_MS * (1 + RETRY_COUNT),
+        queue.tick::<_,_,io::ErrorKind>(RETRY_DELAY_MS * (1 + RETRY_COUNT),
             |_,_| {
                 Ok(())
             },
-            |header| {
+            |header, data| {
                 assert!(discard.iter().any(|&(ref discard,_)| discard.prn == header.prn));
-                assert_eq!(header.payload_size, 8);
+                assert_eq!(data.len(), 8);
                 discard_count += 1;
-            });
+            }).unwrap();
     }
 
     assert_eq!(discard_count, discard.len());
@@ -465,7 +465,7 @@ fn test_congestion() {
     let packets = (0..40).map(|i| create_packet_with(&mut prn, (0..1024).map(|_| i as u8))).collect::<Vec<_>>();
 
     for (header, data) in packets {
-        queue.enqueue(header, &data);
+        queue.enqueue(header, &data).unwrap();
     }
 
     let mut retry_count = 0;
@@ -476,7 +476,7 @@ fn test_congestion() {
             retry_count += 1;
             Ok(())
         },
-        |_| {
+        |_,_| {
             discard_count += 1;
         }).unwrap();
 

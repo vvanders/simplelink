@@ -76,10 +76,6 @@ fn gen_test_addr(mut idx: u8) -> u32 {
 
 #[test]
 fn test_routing() {
-    use log;
-    use util;
-    util::init_log(log::LogLevelFilter::Trace);
-
     use std::iter;
 
     let self_addr = address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
