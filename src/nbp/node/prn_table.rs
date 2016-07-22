@@ -36,9 +36,12 @@ impl Table {
     }
 }
 
+#[cfg(test)]
+use nbp::address;
+
 #[test]
 fn test_contains() {
-    let mut prn = prn_id::new(['K', 'I' ,'7', 'E', 'S', 'T', '0']).unwrap();
+    let mut prn = prn_id::new(address::encode(['K', 'I' ,'7', 'E', 'S', 'T', '0']).unwrap());
     let mut table = new();
 
     for _ in 0..TABLE_SIZE*2 {
@@ -50,7 +53,7 @@ fn test_contains() {
 
 #[test]
 fn test_last_1000() {
-    let mut prn = prn_id::new(['K', 'I' ,'7', 'E', 'S', 'T', '0']).unwrap();
+    let mut prn = prn_id::new(address::encode(['K', 'I' ,'7', 'E', 'S', 'T', '0']).unwrap());
     let mut table = new();
 
     let first_prn = prn.next();

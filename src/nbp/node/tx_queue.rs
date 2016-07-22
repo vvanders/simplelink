@@ -180,6 +180,10 @@ impl Queue {
     fn get_packet_data<'a>(&'a self, pending: &'a PendingPacket) -> &'a [u8] {
         &self.data[pending.data_offset..pending.data_offset+pending.data_size]
     }
+
+    pub fn pending_packets(&self) -> usize {
+        self.pending.len()
+    }
 }
 
 #[cfg(test)]
@@ -188,13 +192,15 @@ use std::io;
 use nbp::prn_id;
 #[cfg(test)]
 use nbp::routing;
+#[cfg(test)]
+use nbp::address;
 
 #[cfg(test)]
 fn create_sample_packet(prn: &mut prn_id::PRN, size: u32) -> (frame::DataHeader, Vec<u8>) {
     let data = (0..size).map(|value| value as u8).collect::<Vec<u8>>();
     let callsign = prn.callsign;
 
-    let header = frame::new_data(prn, &[callsign, routing::ADDRESS_SEPARATOR, callsign]).unwrap();
+    let header = frame::new_data(prn, [callsign, routing::ADDRESS_SEPARATOR, callsign].iter().cloned()).unwrap();
 
     (header, data)
 }
@@ -204,14 +210,14 @@ fn create_packet_with<T>(prn: &mut prn_id::PRN, data: T) -> (frame::DataHeader, 
     let data = data.collect::<Vec<u8>>();
     let callsign = prn.callsign;
 
-    let header = frame::new_data(prn, &[callsign, routing::ADDRESS_SEPARATOR, callsign]).unwrap();
+    let header = frame::new_data(prn, [callsign, routing::ADDRESS_SEPARATOR, callsign].iter().cloned()).unwrap();
 
     (header, data)
 }
 
 #[test]
 fn test_enqueue() {
-    let mut prn = prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
+    let mut prn = prn_id::new(address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap());
     let (header, data) = create_sample_packet(&mut prn, 256);
 
     let mut queue = new();
@@ -234,7 +240,7 @@ fn test_enqueue() {
 
 #[test]
 fn test_discard() {
-    let mut prn = prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
+    let mut prn = prn_id::new(address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap());
     let mut queue = new();
 
     for i in 0..50 {
@@ -304,7 +310,7 @@ fn test_empty_tick() {
 
 #[test]
 fn test_tick_lifetime() {
-    let mut prn = prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
+    let mut prn = prn_id::new(address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap());
     let mut queue = new();
     let (header, data) = create_sample_packet(&mut prn, 1);
 
@@ -346,7 +352,7 @@ fn test_tick_lifetime() {
 
 #[test]
 fn test_tick_bad_io() {
-    let mut prn = prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
+    let mut prn = prn_id::new(address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap());
     let mut queue = new();
     let (header, data) = create_sample_packet(&mut prn, 1);
 
@@ -381,7 +387,7 @@ fn test_tick_bad_io() {
 
 #[test]
 fn test_discard_mixed() {
-    let mut prn = prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
+    let mut prn = prn_id::new(address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap());
     let packets = (0..5).map(|_| create_sample_packet(&mut prn, 8)).collect::<Vec<_>>();
 
     let mut queue = new();
@@ -408,7 +414,7 @@ fn test_discard_mixed() {
 
 #[test]
 fn test_multi_ack() {
-    let mut prn = prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
+    let mut prn = prn_id::new(address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap());
     let discard = (0..5).map(|_| create_sample_packet(&mut prn, 8)).collect::<Vec<_>>();
     let ack = (0..10).map(|_| create_sample_packet(&mut prn, 16)).collect::<Vec<_>>();
 
@@ -458,7 +464,7 @@ fn test_multi_ack() {
 
 #[test]
 fn test_congestion() {
-    let mut prn = prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
+    let mut prn = prn_id::new(address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap());
     let mut queue = new();
 
     //Create 40 packets 1024 in length to force congestion control

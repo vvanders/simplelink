@@ -12,6 +12,9 @@ pub const MTU: usize = 1500;
 /// Max size for a packet
 pub const MAX_PACKET_SIZE: usize = MTU + 4 + 4 * 18 + 2;
 
+/// Max size of an ack packet
+pub const MAX_ACK_SIZE: usize = 4 + 4 + 2;
+
 /// Represents a single NBP Ack Frame
 #[derive(Copy,Clone,Eq,PartialEq,Debug)]
 pub struct AckHeader {
@@ -75,16 +78,16 @@ pub fn new_ack(prn: u32, src_addr: u32) -> AckHeader {
 }
 
 /// Constructs a new data frame
-pub fn new_data(prn: &mut prn_id::PRN, dest: &[u32]) -> Result<DataHeader, EncodeError> {
+pub fn new_data<T>(prn: &mut prn_id::PRN, dest: T) -> Result<DataHeader, EncodeError> where T: Iterator<Item=u32> {
     let mut addr: routing::Route = [0; routing::MAX_LENGTH];
-
-    if dest.len() > routing::MAX_LENGTH {
-        return Err(EncodeError::AddressTooLong)
-    }
 
     //Encode and look for valid addr
     let mut found_sep = false;
-    for (i, dest_addr) in dest.iter().cloned().enumerate() {
+    for (i, dest_addr) in dest.enumerate() {
+        if i == routing::MAX_LENGTH {
+            return Err(EncodeError::AddressTooLong)
+        }
+
         found_sep = found_sep || dest_addr == routing::ADDRESS_SEPARATOR;
 
         addr[i] = dest_addr;
@@ -291,7 +294,7 @@ pub fn to_bytes<T>(bytes: &mut T, frame: &Frame, payload: Option<&[u8]>) -> Resu
 fn serialize_ack_test() {
     use std::io::Cursor;
 
-    let mut prn = prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
+    let mut prn = prn_id::new(address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap());
     let ack = new_ack(prn.next(), prn.callsign);
 
     let mut data = vec!();
@@ -315,8 +318,8 @@ use std::iter;
 
 #[cfg(test)]
 fn serialize_packet(dest: &[u32], payload: &[u8]) -> Vec<u8> {
-    let mut prn = prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
-    let data_packet = new_data(&mut prn, dest,).unwrap();
+    let mut prn = prn_id::new(address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap());
+    let data_packet = new_data(&mut prn, dest.iter().cloned()).unwrap();
 
     let mut data = vec!();
 

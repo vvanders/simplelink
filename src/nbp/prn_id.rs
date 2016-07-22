@@ -12,15 +12,11 @@ pub struct PRN {
 pub type PrnValue = u32;
 
 /// Creates new PRN id from an existing callsign
-pub fn new(callsign: [char; 7]) -> Option<PRN> {
-    use nbp::address;
-
-    address::encode(callsign).map(|addr| {
-        PRN {
-            current: 0xFFFFFFFF,
-            callsign: addr
-        }
-    })
+pub fn new(callsign: u32) -> PRN {
+    PRN {
+        current: 0xFFFFFFFF,
+        callsign: callsign
+    }
 }
 
 impl PRN {
@@ -47,6 +43,9 @@ impl PRN {
     }
 }
 
+#[cfg(test)]
+use nbp::address;
+
 #[test]
 fn test_unique() {
     use nbp::prn_id;
@@ -54,13 +53,7 @@ fn test_unique() {
     const SAMPLE_SIZE: usize = 2048;
 
     let mut table: [u32; SAMPLE_SIZE] = [0; SAMPLE_SIZE];
-    let mut prn = match prn_id::new(['K', 'I' ,'7', 'E', 'S', 'T', '0']) {
-        Some(s) => s,
-        None => {
-            assert!(false);
-            return
-        }
-    };
+    let mut prn = prn_id::new(address::encode(['K', 'I' ,'7', 'E', 'S', 'T', '0']).unwrap());
 
     for i in 0..SAMPLE_SIZE {
         table[i] = prn.current();
@@ -76,21 +69,8 @@ fn test_unique() {
 fn test_unique_seq() {
     use nbp::prn_id;
 
-    let mut prn_first = match prn_id::new(['K', 'I' ,'7', 'E', 'S', 'T', '0']) {
-        Some(s) => s,
-        None => {
-            assert!(false);
-            return
-        }
-    };
-
-    let mut prn_second = match prn_id::new(['K', 'F' ,'7', 'S', 'J', 'K', '0']) {
-        Some(s) => s,
-        None => {
-            assert!(false);
-            return
-        }
-    };
+    let mut prn_first = prn_id::new(address::encode(['K', 'I' ,'7', 'E', 'S', 'T', '0']).unwrap());
+    let mut prn_second = prn_id::new(address::encode(['K', 'F' ,'7', 'S', 'J', 'K', '0']).unwrap());
 
     for _ in 0..1024 {
         assert!(prn_first.next() != prn_second.next());
@@ -101,13 +81,7 @@ fn test_unique_seq() {
 fn test_seed() {
     use nbp::prn_id;
 
-    let mut prn = match prn_id::new(['K', 'I' ,'7', 'E', 'S', 'T', '0']) {
-        Some(s) => s,
-        None => {
-            assert!(false);
-            return
-        }
-    };
+    let mut prn = prn_id::new(address::encode(['K', 'I' ,'7', 'E', 'S', 'T', '0']).unwrap());
 
     const SEED: u32 = 0xFF123456; 
     prn.seed(SEED);

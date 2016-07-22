@@ -98,17 +98,14 @@ pub fn finish(mut crc: CRC) -> CRC {
     crc
 }
 
+#[cfg(test)]
+use nbp::address;
+
 #[test]
 fn crc_test() {
     use nbp::prn_id;
 
-    let mut prn = match prn_id::new(['K', 'I', '7', 'E', 'S', 'T', '0']) {
-        Some(s) => s,
-        None => {
-            assert!(false);
-            return
-        }
-    };
+    let mut prn = prn_id::new(address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap());
 
     const SAMPLES: usize = 128;
 

@@ -119,13 +119,15 @@ fn main() {
         }
     }
 
-    let mut prn = match prn_id::new(string_to_addr(callsign)) {
+    let callsign_id = match address::encode(string_to_addr(callsign)) {
         Some(prn) => prn,
         None => {
             println!("Unable to parse callsign, a valid callsign is up to seven characters containing A-Z, 0-9");
             return;
         }
     };
+
+    let mut prn = prn_id::new(callsign_id);
 
     let mut display = display::new();
 
@@ -314,7 +316,7 @@ fn send_frame(prn: &mut prn_id::PRN, input: &String, port: &mut io::Write) -> Re
 
     match dest {
         Ok(dest) => {
-            let frame = match frame::new_data(prn, &dest) {
+            let frame = match frame::new_data(prn, dest.iter().cloned()) {
                 Err(e) => {
                     error!("Unable to create frame: {:?}", e);
                     return Ok(())

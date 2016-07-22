@@ -13,6 +13,7 @@ pub const MAX_LENGTH: usize = 17;
 ///Route of a NBP packet, allows for 16 callsigns + separator to denote where the packet is in its routing
 pub type Route = [u32; MAX_LENGTH];
 
+#[derive(Debug)]
 pub enum ParseError {
     /// Route has a bad format
     BadFormat
@@ -24,8 +25,13 @@ pub fn is_destination(route: &Route, this_addr: u32) -> bool {
 }
 
 /// Check if this route should retry the current message
-pub fn should_retry(route: &Route) -> bool {
+pub fn should_route(route: &Route) -> bool {
     route[0] != BROADCAST_ADDRESS
+}
+
+/// Check if this is the final destination for this route
+pub fn final_addr(route: &Route) -> bool {
+    route[1] == ADDRESS_SEPARATOR
 }
 
 /// Advances the route with our address(in case we had a broadcast address)
