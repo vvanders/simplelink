@@ -143,8 +143,6 @@ pub fn from_bytes<T>(bytes: &mut T, out_payload: &mut [u8], size: usize) -> Resu
         for _ in 0..routing::MAX_LENGTH {
             let value = try!(read_u32(bytes, &mut crc));
 
-            trace!("Got addr {} {}", value, address::format_addr(value));
-
             if value == routing::ADDRESS_SEPARATOR {
                 addr_marker += 1;
             }

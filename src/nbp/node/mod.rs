@@ -205,15 +205,20 @@ impl Node {
             self.recv_buffer.extend_from_slice(&scratch[..bytes]);
             
             //Parse any KISS frames
-            self.kiss_frame_scratch.drain(..);
-            match kiss::decode(self.recv_buffer.iter().cloned(), &mut self.kiss_frame_scratch) {
-                Some(decoded) => {
-                    let mut payload: [u8; frame::MTU] = unsafe { mem::uninitialized() };
-                    let (packet, payload_size) = try!(frame::from_bytes(&mut io::Cursor::new(&self.kiss_frame_scratch[..decoded.payload_size]), &mut payload, decoded.payload_size));
-                    
-                    try!(self.dispatch_recv(tx_drain, &packet, &payload[..payload_size], &mut observe_drain, &mut recv_drain));
-                },
-                None => ()
+            loop {
+                self.kiss_frame_scratch.drain(..);
+                match kiss::decode(self.recv_buffer.iter().cloned(), &mut self.kiss_frame_scratch) {
+                    Some(decoded) => {
+                        let mut payload: [u8; frame::MTU] = unsafe { mem::uninitialized() };
+                        let (packet, payload_size) = try!(frame::from_bytes(&mut io::Cursor::new(&self.kiss_frame_scratch[..decoded.payload_size]), &mut payload, decoded.payload_size));
+                        
+                        try!(self.dispatch_recv(tx_drain, &packet, &payload[..payload_size], &mut observe_drain, &mut recv_drain));
+
+                        //Clear recieved
+                        self.recv_buffer.drain(..decoded.bytes_read);
+                    },
+                    None => break
+                }
             }
         }
 
@@ -258,6 +263,9 @@ impl Node {
                             trace!("Packet has routes yet to complete, sending");
                             let mut routed_header = header;
                             routed_header.address_route = try!(routing::advance(&header.address_route, self.prn.callsign));
+                            routed_header.prn = self.prn.next();
+
+                            println!("route is {}", routing::format_route(&routed_header.address_route));
 
                             try!(self.send_frame(routed_header, payload, tx_drain));
 
@@ -336,8 +344,8 @@ fn test_send_recv() {
     let local_addr = address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
     let remote_addr = address::encode(['K', 'F', '7', 'S', 'J', 'K', '0']).unwrap();
 
-    let mut tx_local = Vec::new();
-    let mut tx_remote = Vec::new();
+    let mut tx_local = vec!();
+    let mut tx_remote = vec!();
 
     let mut local = new(local_addr);
     let mut remote = new(remote_addr);
@@ -374,4 +382,78 @@ fn test_send_recv() {
 
     assert!(match_ack);
     assert_eq!(local.tx_queue.pending_packets(), 0);
+}
+
+#[test]
+fn test_route() {
+    fn gen_callsign(idx: usize) -> [char; 7] {
+        ['T', 'E', 'S', 'T', address::symbol_to_character((idx / 10) as u8), address::symbol_to_character((idx % 10) as u8), '0']
+    }
+
+    const CALL_COUNT: usize = 16;
+
+    let route = (0..CALL_COUNT-1)
+        .map(|i| gen_callsign(i))
+        .map(|cs| address::encode(cs).unwrap())
+        .collect::<Vec<_>>();
+
+    let local = address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
+
+    use std::iter;
+    let mut nodes = iter::once(local).chain(route.iter().cloned())
+        .map(|addr| new(addr))
+        .collect::<Vec<_>>();
+
+    let mut tx_frame = vec!();
+    let mut rx_frame;
+
+    let mut obs = [0; CALL_COUNT];
+    let mut recv = [0; CALL_COUNT];
+
+    //Send initial packet
+    let data = (0..128).map(|x| x as u8);
+    nodes[0].send(data, route.iter().cloned(), &mut tx_frame).unwrap();
+
+    rx_frame = tx_frame.clone();
+    tx_frame.drain(..);
+
+    for _ in 0..CALL_COUNT {
+        for (i,node) in nodes.iter_mut().enumerate() {
+            node.recv(&mut io::Cursor::new(&rx_frame), &mut tx_frame,
+                |header,data| {
+                    match header {
+                        &frame::Frame::Data(_) => {
+                            recv[i] += 1;
+                            assert!((0..128).eq(data.iter().cloned()));
+                        },
+                        _ => ()
+                    }
+                },
+                |header,data| {
+                    match header {
+                        &frame::Frame::Data(_) => {
+                            obs[i] += 1;
+                            assert!((0..128).eq(data.iter().cloned()));
+                        },
+                        _ => ()
+                    }
+                }).unwrap();
+        }
+
+        //Swap TX and rx
+        rx_frame = tx_frame.clone();
+        tx_frame.drain(..);
+    }
+
+    for i in 1..CALL_COUNT {
+        assert_eq!(obs[i], 15);
+        assert_eq!(nodes[i].tx_queue.pending_packets(), 0);
+        assert_eq!(nodes[i].recv_buffer.len(), 0);
+    }
+
+    for i in 1..CALL_COUNT-1 {
+        assert_eq!(recv[i], 0);
+    }
+
+    assert_eq!(recv[CALL_COUNT-1], 1);
 }
