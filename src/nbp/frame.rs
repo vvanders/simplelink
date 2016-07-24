@@ -31,6 +31,8 @@ pub struct DataHeader {
     pub prn: u32,
     /// Forward and return address routing. Each path can contain up to 16 addresses plus a single separator.
     pub address_route: routing::Route
+
+    //@todo: add content PRN so we can deal with multi-path propagation
 }
 
 /// All possible NBP frames

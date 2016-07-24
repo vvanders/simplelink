@@ -176,98 +176,113 @@ pub fn decode<T>(data: T, decoded: &mut Vec<u8>) -> Option<DecodedFrame> where T
     let (reserved, _) = data.size_hint();
     decoded.reserve(reserved);
 
-    trace!("Decoding KISS frames");
+    let decoded_start = decoded.len();
 
-    let decode_start = decoded.len();
+    //trace!("Decoding KISS frames");
 
-    let (_, port, last_idx, payload_size) = data.enumerate()    //Keep track of idx so we can return the last idx we processed to the caller
+    //Possible tokens in decoded KISS frame stream
+    enum Token {
+        Start(usize),   //Frame start at this idx(FEND)
+        End(usize),     //Frame end at this idx(FEND followed by 1+ bytes followed by FEND)
+        Port(u8),       //First byte of valid frame is a port
+        Byte(u8),       //Byte data(item inside two FEND values)
+        Empty           //Data before or after FEND pairs
+    }
+
+    let (port, start_idx, end_idx) = data.enumerate()    //Keep track of idx so we can return the last idx we processed to the caller
         //Find our first valid start + end frame
         .scan((None, None), |&mut (ref mut start_frame, ref mut end_frame), (idx, byte)| {
             //If we've already found a valid range then stop iterating
-            if start_frame.is_some() && end_frame.is_some() {
-                None
-            } else {
-                let value =
-                    //Looking for start of the frame
-                    if start_frame.is_none() {
-                        if byte == FEND {
-                            trace!("Found start frame at {} idx", idx);
+            let value =
+                //Looking for start of the frame
+                if start_frame.is_none() {
+                    if byte == FEND {
+                        //trace!("Found start frame at {} idx", idx);
+                        *start_frame = Some(idx);
+                        Token::Start(idx)
+                    } else {
+                        Token::Empty
+                    }
+                } else if end_frame.is_none() {   //Looking for the end
+                    if byte == FEND {
+                        //Empty frame, just restart the scan
+                        if start_frame.unwrap()+1 == idx {
+                            //trace!("Found empty frame at {} idx, moving to next frame", idx);
                             *start_frame = Some(idx);
-                            Some((idx, byte))
+                            Token::Start(idx)
                         } else {
-                            None
+                            //trace!("Found end frame at {} idx", idx);
+                            *end_frame = Some(idx);
+                            Token::End(idx)
                         }
-                    } else {   //Looking for the end
-                        if byte == FEND {
-                            //Empty frame, just restart the scan
-                            if start_frame.unwrap()+1 == idx {
-                                trace!("Found empty frame at {} idx, moving to next frame", idx);
-                                *start_frame = Some(idx);
-                            } else {
-                                trace!("Found end frame at {} idx", idx);
-                                *end_frame = Some(idx);
-                            }
+                    } else {
+                        if start_frame.unwrap()+1 == idx {
+                            let port = byte >> 4;
+                            //trace!("Decoded port is {}", port);
+
+                            Token::Port(port)
+                        } else {
+                            Token::Byte(byte)
                         }
+                    }
+                } else {
+                    return None
+                };
 
-                        Some((idx, byte))
-                    };
-
-                Some(value)
-            }
-        })
-        //Filter out any empty frames or data we don't want to process
-        .filter_map(|x| {
-            x.and_then(|(idx, value)| {
-                match value {
-                    FEND => None,   //Don't include frame delimiters
-                    _ => Some((idx, value))
-                }
-            })
+            //Still a valid stream
+            Some(value)
         })
         //Decode escaped values
-        .scan(false, |was_esc, (idx, byte)| {
-            let value = if byte == FESC {
-                *was_esc = true;
-                None    //Don't include escaped characters
-            } else if *was_esc {
-                *was_esc = false;
-                
-                match byte {
-                    TFEND => Some((idx, FEND)),
-                    TFESC => Some((idx, FESC)),
-                    _ => None //This is a bad value, just discard the byte for now since we don't know how to handle it
-                }
-            } else {
-                Some((idx, byte))
+        .scan(false, |was_esc, token| {
+            let value = match token {
+                Token::Byte(byte) => {
+                    if byte == FESC {
+                        *was_esc = true;
+                        None    //Don't include escaped characters
+                    } else if *was_esc {
+                        *was_esc = false;
+
+                        match byte {
+                            TFEND => Some(Token::Byte(FEND)),
+                            TFESC => Some(Token::Byte(FESC)),
+                            _ => None //This is a bad value, just discard the byte for now since we don't know how to handle it
+                        }
+                    } else {
+                        Some(Token::Byte(byte))
+                    }
+                },
+                _ => Some(token)
             };
 
             Some(value)
         })
-        .filter_map(|x| x)  //Skip things we don't want
-        //Decode frame into output buffer
-        .fold((decoded, None, None, None), |(out_decode, mut port, _, _), (idx, byte)| {
-            //If we've already defined the port that means we're on the data part of the frame
-            if port.is_some() {
-                out_decode.push(byte);
-            } else {    //First byte is cmd + port, cmd should always be data(0x00)
-                port = Some(byte >> 4);
-                trace!("Decoded port is {}", port.as_ref().unwrap());
+        .filter_map(|x| x)  //Remove escaped characters
+        //Aggregate our data and start + end frames. If we don't have both this isn't a valid frame
+        .fold((None, None, None), |(port, start_idx, end_idx), token| {
+            match token {
+                Token::Byte(byte) => {
+                    decoded.push(byte);
+                    (port, start_idx, end_idx)
+                },
+                Token::Start(idx) => (port, Some(idx+1), end_idx),
+                Token::End(idx) => (port, start_idx, Some(idx-1)),
+                Token::Port(port_num) => (Some(port_num), start_idx, end_idx),
+                Token::Empty => (port, start_idx, end_idx)
             }
-
-            let data_size = out_decode.len() - decode_start;
-            (out_decode, port, Some(idx), Some(data_size))
         });
 
     //Check if we found anything
     port.and_then(|port| {
-        last_idx.and_then(|idx| {
-            payload_size.and_then(|payload_size| {
+        end_idx.and_then(|end_idx| {
+            start_idx.and_then(|start_idx| {
+                let payload_size = end_idx - start_idx;
+
                 debug!("Decoded KISS frame of {} bytes on port {}", payload_size, port);
 
                 Some(DecodedFrame {
                     port: port,
-                    bytes_read: idx+2,   //Note that since we truncate the FEND we need to add an extra offset here
-                    payload_size: payload_size
+                    bytes_read: end_idx+2,   //Note that since we truncate the FEND we need to add an extra offset here
+                    payload_size: decoded.len() - decoded_start
                 })
             })
         })
@@ -407,3 +422,32 @@ fn test_multi_frame() {
     test_decode_single(&mut data, &expected_three, 0);
 }
 
+#[test]
+fn pre_kiss_data() {
+    use std::io::Cursor;
+
+    let expected_one: Vec<u8> = ['T', 'E', 'S', 'T'].iter().map(|chr| *chr as u8).collect();
+    let mut data = vec!(1, 2, 3);
+
+    encode(&mut Cursor::new(&expected_one), &mut data, 0).unwrap();
+    test_decode_single(&mut data, &expected_one, 0);
+}
+
+#[test]
+fn post_kiss_data() {
+    use std::io::Cursor;
+
+    let expected_one: Vec<u8> = ['T', 'E', 'S', 'T'].iter().map(|chr| *chr as u8).collect();
+    let mut data = vec!();
+    encode(&mut Cursor::new(&expected_one), &mut data, 0).unwrap();
+
+    data.extend_from_slice(&[1, 2, 3]);
+
+    test_decode_single(&mut data, &expected_one, 0);
+
+    let mut decoded = vec!();
+    match decode(data.iter().cloned(), &mut decoded) {
+        Some(_) => assert!(false),
+        None => ()
+    }
+}

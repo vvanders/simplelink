@@ -25,8 +25,8 @@ pub fn is_destination(route: &Route, this_addr: u32) -> bool {
 }
 
 /// Check if this route should retry the current message
-pub fn should_route(route: &Route) -> bool {
-    route[0] != BROADCAST_ADDRESS
+pub fn is_broadcast(route: &Route) -> bool {
+    route[0] == BROADCAST_ADDRESS
 }
 
 /// Check if this is the final destination for this route
