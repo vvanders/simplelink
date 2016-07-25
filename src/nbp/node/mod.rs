@@ -14,6 +14,7 @@ pub struct Node {
     prn: prn_id::PRN,
     
     recv_prn_table: prn_table::Table,
+    recv_content_prn_table: prn_table::Table,
     tx_queue: tx_queue::Queue,
 
     recv_buffer: Vec<u8>,
@@ -107,6 +108,7 @@ pub fn new(callsign: u32) -> Node {
     Node {
         prn: prn_id::new(callsign),
         recv_prn_table: prn_table::new(),
+        recv_content_prn_table: prn_table::new(),
         tx_queue: tx_queue::new(),
         recv_buffer: vec!(),
         kiss_frame_scratch: vec!()
@@ -261,15 +263,33 @@ impl Node {
                         trace!("Sending ack for {}", header.prn);
                     }
 
+                    let new_packet = !self.recv_prn_table.contains(header.prn);
+
                     //Don't process duplicates
-                    if !self.recv_prn_table.contains(header.prn) {
+                    if new_packet {
                         trace!("New packet that we haven't seen yet");
                         self.recv_prn_table.add(header.prn);
 
                         //If we're the final destination then we should process this packet
                         if routing::final_addr(&header.address_route) {
-                            trace!("Final dest, surfacing packet as data");
-                            true
+                            //Make sure we haven't seen this packet as a split path route before
+                            let new_content = header.content_prn.map(|prn| {
+                                let result = !self.recv_content_prn_table.contains(prn);
+
+                                if result {
+                                    self.recv_content_prn_table.add(prn);
+                                } else {
+                                    trace!("Packet with duplicate data, skipping");
+                                }
+
+                                result
+                            }).unwrap_or(true);
+                            
+                            if new_content {
+                                trace!("Final dest, surfacing packet as data");
+                            }
+
+                            new_content
                         } else {    //Route this packet along
                             trace!("Packet has routes yet to complete, sending");
                             let mut routed_header = header;
@@ -568,4 +588,56 @@ fn test_broadcast_route() {
     }
 
     assert_eq!(recv[CALL_COUNT-1], 1);
+}
+
+#[test]
+fn test_split_path() {
+    fn get_split(prn: &mut prn_id::PRN, content_prn: prn_id::PrnValue) -> Vec<u8> {
+        let mut packet = vec!();
+        let callsign = prn.callsign;
+        let mut header = frame::new_data(prn, [callsign, routing::ADDRESS_SEPARATOR, callsign, callsign].iter().cloned()).unwrap();
+        header.content_prn = Some(content_prn);
+        frame::to_bytes(&mut packet, &frame::Frame::Data(header), None).unwrap();
+        let mut kiss = vec!();
+        kiss::encode(&mut io::Cursor::new(packet), &mut kiss, 0).unwrap();
+
+        kiss
+    }
+
+    let mut prn = prn_id::new(address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap());
+    let content_prn = prn.next();
+
+    let mut left_packet = get_split(&mut prn, content_prn);
+    let right_packet = get_split(&mut prn, content_prn);
+
+    left_packet.extend_from_slice(&right_packet);
+
+    let mut node = new(prn.callsign);
+
+    let mut rx_count = 0;
+    let mut obs_count = 0;
+
+    let mut tx = vec!();
+    node.recv(&mut io::Cursor::new(&left_packet), &mut tx,
+        |header,_| {
+            match header {
+                &frame::Frame::Data(data) => {
+                    rx_count += 1;
+                    assert_eq!(data.content_prn, Some(content_prn));
+                },
+                _ => ()
+            }
+        },
+        |header,_| {
+            match header {
+                &frame::Frame::Data(data) => {
+                    obs_count += 1;
+                    assert_eq!(data.content_prn, Some(content_prn));
+                },
+                _ => ()
+            }
+        }).unwrap();
+    
+    assert_eq!(rx_count, 1);
+    assert_eq!(obs_count, 2);
 }
