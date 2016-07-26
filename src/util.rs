@@ -2,22 +2,7 @@
 use log;
 use fern;
 use time;
-
-pub trait CollectSlice<T>: Iterator<Item=T> {
-    fn collect_slice(&mut self, out_slice: &mut [T]) {
-        self.collect_slice_offset(out_slice, 0);
-    }
-
-    fn collect_slice_offset(&mut self, out_slice: &mut [T], offset: usize) {
-        let mut idx = 0;
-        for item in self.skip(offset) {
-            out_slice[idx] = item;
-            idx += 1;
-        }
-    }
-}
-
-impl<I: Iterator<Item=T>, T> CollectSlice<T> for I {}
+use std::io;
 
 pub fn init_log(trace: log::LogLevelFilter) {
     //Print is gated by trace level
@@ -42,5 +27,53 @@ pub fn init_log(trace: log::LogLevelFilter) {
 
     if let Err(e) = fern::init_global_logger(file_logger, log::LogLevelFilter::Trace) {
         panic!("Failed to initialize global logger: {}", e);
+    }
+}
+
+pub struct WriteDispatch<'a> {
+    pub write: &'a mut io::Write
+}
+
+impl<'a> io::Write for WriteDispatch<'a> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.write.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.write.flush()
+    }
+}
+
+pub fn new_write_dispatch<'a>(write: &'a mut io::Write) -> WriteDispatch<'a> {
+    WriteDispatch {
+        write: write
+    }
+}
+
+pub struct ReadWriteDispatch<'a> {
+    read: &'a mut io::Read,
+    write: &'a mut io::Write
+}
+
+impl <'a> io::Write for ReadWriteDispatch<'a> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.write.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.write.flush()
+    }
+}
+
+impl <'a> io::Read for ReadWriteDispatch<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.read.read(buf)
+    }
+}
+
+pub fn new_read_write_dispatch<'a>(read: &'a mut io::Read, write: &'a mut io::Write) -> ReadWriteDispatch<'a> {
+    ReadWriteDispatch {
+        read: read,
+        write: write
     }
 }

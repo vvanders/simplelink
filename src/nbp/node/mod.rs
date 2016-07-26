@@ -195,18 +195,17 @@ impl Node {
     }
 
     /// Receives any packets, sends immediate acks, packets are delivered via packet_drain callback
-    pub fn recv<R,T,P,O>(&mut self, rx_source: &mut R, tx_drain: &mut T, mut recv_drain: P, mut observe_drain: O) -> Result<(), RecvError>
+    pub fn recv<RW,P,O>(&mut self, rx_tx: &mut RW, mut recv_drain: P, mut observe_drain: O) -> Result<(), RecvError>
         where
-            R: io::Read,
-            T: io::Write,
-            P: FnMut(&frame::Frame, &[u8]),
+            RW: io::Read + io::Write,
+            P: FnMut(&frame::DataHeader, &[u8]),
             O: FnMut(&frame::Frame, &[u8])
     {
         const SCRACH_SIZE: usize = 256;
         let mut scratch: [u8; SCRACH_SIZE] = unsafe { mem::uninitialized() };
 
         loop {
-            let bytes = try!(rx_source.read(&mut scratch));
+            let bytes = try!(rx_tx.read(&mut scratch));
 
             if bytes == 0 {
                 break;
@@ -223,7 +222,7 @@ impl Node {
                         let mut payload: [u8; frame::MTU] = unsafe { mem::uninitialized() };
                         let (packet, payload_size) = try!(frame::from_bytes(&mut io::Cursor::new(&self.kiss_frame_scratch[..decoded.payload_size]), &mut payload, decoded.payload_size));
                         
-                        try!(self.dispatch_recv(tx_drain, &packet, &payload[..payload_size], &mut observe_drain, &mut recv_drain));
+                        try!(self.dispatch_recv(rx_tx, &packet, &payload[..payload_size], &mut recv_drain, &mut observe_drain));
 
                         //Clear recieved
                         self.recv_buffer.drain(..decoded.bytes_read);
@@ -237,18 +236,16 @@ impl Node {
     }
 
     /// Dispaches packet based on data/ack and if this was a routing destination
-    fn dispatch_recv<T,P,O>(&mut self, tx_drain: &mut T, packet: &frame::Frame, payload: &[u8], observe_drain: &mut P, recv_drain: &mut O) -> Result<(), RecvError>
+    fn dispatch_recv<T,P,O>(&mut self, tx_drain: &mut T, packet: &frame::Frame, payload: &[u8], recv_drain: &mut P, observe_drain: &mut O) -> Result<(), RecvError>
         where 
             T: io::Write,
-            P: FnMut(&frame::Frame, &[u8]),
+            P: FnMut(&frame::DataHeader, &[u8]),
             O: FnMut(&frame::Frame, &[u8])
     {
-        let target = match packet {
+        match packet {
             &frame::Frame::Ack(ack) => {
                 trace!("Recieved ack {}", ack.prn);
                 self.tx_queue.ack_recv(ack.prn);
-
-                false
             },
             &frame::Frame::Data(header) => {
                 if routing::is_destination(&header.address_route, self.prn.callsign) {
@@ -276,6 +273,7 @@ impl Node {
                             let new_content = header.content_prn.map(|prn| {
                                 let result = !self.recv_content_prn_table.contains(prn);
 
+                                //We got a new packet for us, recieve it
                                 if result {
                                     self.recv_content_prn_table.add(prn);
                                 } else {
@@ -287,9 +285,8 @@ impl Node {
                             
                             if new_content {
                                 trace!("Final dest, surfacing packet as data");
+                                recv_drain(&header, payload);
                             }
-
-                            new_content
                         } else {    //Route this packet along
                             trace!("Packet has routes yet to complete, sending");
                             let mut routed_header = header;
@@ -322,26 +319,18 @@ impl Node {
                             } else {
                                 try!(self.enqueue_frame(routed_header, payload, tx_drain));
                             }
-
-                            false
                         }
                     } else {
                         trace!("Duplicate packet already recieved before");
-                        false
                     }
                 } else {
                     trace!("Data frame but addr {:?} is not our dest {:?}", address::decode(header.address_route[0]), address::decode(self.prn.callsign));
-                    false
                 }
             }
-        };
+        }
 
         //Only share this with our client if we haven't seen if before
         observe_drain(packet, payload);
-
-        if target {
-            recv_drain(packet, payload);
-        }
 
         Ok(())
     }
@@ -371,6 +360,9 @@ impl Node {
     }
 }
 
+
+#[cfg(test)]
+use util;
 
 #[test]
 fn test_send() {
@@ -404,7 +396,7 @@ fn test_send_recv() {
     let prn = local.send(data.iter().cloned(), [remote_addr].iter().cloned(), &mut tx_local).unwrap();
 
     let mut match_recv = false;
-    remote.recv(&mut io::Cursor::new(&tx_local), &mut tx_remote,
+    remote.recv(&mut util::new_read_write_dispatch(&mut io::Cursor::new(&tx_local), &mut tx_remote),
         |_,recv_data| {
             match_recv = true;
             assert!(recv_data.iter().eq(data.iter()));
@@ -418,7 +410,7 @@ fn test_send_recv() {
     tx_local.drain(..);
 
     let mut match_ack = false;
-    local.recv(&mut io::Cursor::new(&tx_remote), &mut tx_local,
+    local.recv(&mut util::new_read_write_dispatch(&mut io::Cursor::new(&tx_remote), &mut tx_local),
         |_,_| {},
         |header,_| {
             match header {
@@ -471,15 +463,10 @@ fn test_route() {
 
     for _ in 0..CALL_COUNT {
         for (i,node) in nodes.iter_mut().enumerate() {
-            node.recv(&mut io::Cursor::new(&rx_frame), &mut tx_frame,
+            node.recv(&mut util::new_read_write_dispatch(&mut io::Cursor::new(&rx_frame), &mut tx_frame),
                 |header,data| {
-                    match header {
-                        &frame::Frame::Data(_) => {
-                            recv[i] += 1;
-                            assert!((0..128).eq(data.iter().cloned()));
-                        },
-                        _ => ()
-                    }
+                    recv[i] += 1;
+                    assert!((0..128).eq(data.iter().cloned()));
                 },
                 |header,data| {
                     match header {
@@ -551,15 +538,10 @@ fn test_broadcast_route() {
 
     for _ in 0..CALL_COUNT {
         for (i,node) in nodes.iter_mut().enumerate() {
-            node.recv(&mut io::Cursor::new(&rx_frame), &mut tx_frame,
+            node.recv(&mut util::new_read_write_dispatch(&mut io::Cursor::new(&rx_frame), &mut tx_frame),
                 |header,data| {
-                    match header {
-                        &frame::Frame::Data(_) => {
-                            recv[i] += 1;
-                            assert!((0..128).eq(data.iter().cloned()));
-                        },
-                        _ => ()
-                    }
+                    recv[i] += 1;
+                    assert!((0..128).eq(data.iter().cloned()));
                 },
                 |header,data| {
                     match header {
@@ -618,15 +600,10 @@ fn test_split_path() {
     let mut obs_count = 0;
 
     let mut tx = vec!();
-    node.recv(&mut io::Cursor::new(&left_packet), &mut tx,
-        |header,_| {
-            match header {
-                &frame::Frame::Data(data) => {
-                    rx_count += 1;
-                    assert_eq!(data.content_prn, Some(content_prn));
-                },
-                _ => ()
-            }
+    node.recv(&mut util::new_read_write_dispatch(&mut io::Cursor::new(&left_packet), &mut tx),
+        |header,data| {
+            rx_count += 1;
+            assert_eq!(header.content_prn, Some(content_prn));
         },
         |header,_| {
             match header {

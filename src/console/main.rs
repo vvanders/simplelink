@@ -12,11 +12,10 @@ mod display;
 
 use std::time::Duration;
 use std::io;
-use std::iter;
 use std::thread;
 
-use nbplink::nbp::{frame, address, prn_id, routing};
-use nbplink::kiss;
+use nbplink::nbp::{address, routing, node};
+use nbplink::util;
 
 fn main() {
     //Parse command line arguments
@@ -85,7 +84,8 @@ fn main() {
 
     let echo = matches.is_present("echo");
 
-    let mut echo_port = echo::new();
+    let mut echo_tx = echo::new();
+    let mut echo_rx = echo::new();
     let mut port = if !echo {
         Some(match configure_port(port, baud) {
             Ok(port) => port,
@@ -104,7 +104,7 @@ fn main() {
 
     for cmd in cmds {
         let write_port: &mut io::Write = if echo {
-            &mut echo_port
+            &mut echo_tx
         } else {
             port.as_mut().unwrap()
         };
@@ -127,15 +127,11 @@ fn main() {
         }
     };
 
-    let mut prn = prn_id::new(callsign_id);
-
     let mut display = display::new();
+    let mut node = node::new(callsign_id);
 
     loop {
         let start_ms = time::precise_time_ns() / 1_000_000;
-
-        let mut pending = vec!();
-        let mut pending_bytes = 0;
 
         match display.get_input() {
             Some(input) => {
@@ -143,13 +139,13 @@ fn main() {
                     0 => (),
                     _ => {
                         let write_port: &mut io::Write = if echo {
-                            &mut echo_port
+                            &mut echo_tx
                         } else {
                             port.as_mut().unwrap()
                         };
 
-                        match send_frame(&mut prn, &input, write_port) {
-                            Ok(()) => (),
+                        match send_frame(&mut node, &input, write_port) {
+                            Ok(_) => (),
                             Err(e) => {
                                 error!("Unable to send frame: {:?}", e);
                             }
@@ -160,38 +156,16 @@ fn main() {
             None => ()
         }
 
-        //Make sure we can always read at least the MTU
-        pending.resize(pending_bytes + frame::MTU, 0);
+        if echo {
+            read_frames(&mut node, &mut util::new_read_write_dispatch(&mut echo_tx, &mut echo_rx), &mut display);
 
-        let read_port: &mut io::Read = if echo {
-            &mut echo_port
+            //Swap so we read output on next tick
+            echo_rx = echo_tx;
+            echo_tx = echo::new();
         } else {
-            port.as_mut().unwrap()
-        };
-
-        let read = match read_port.read(&mut pending[pending_bytes..]) {
-            Ok(r) => r,
-            Err(e) => {
-                match e.kind() {
-                    io::ErrorKind::TimedOut => 0,
-                    _ => {
-                        error!("Tried to read bytes from serial port but IO error occurred: {:?}", e);
-                        return
-                    }
-                }
-            }
-        };
-
-        if read > 0 {
-            pending_bytes += read;
-            match read_frame(&mut pending, &mut pending_bytes) {
-                Some(msg) => {
-                    display.push_message(&msg);
-                },
-                None => ()
-            }
+            read_frames(&mut node, port.as_mut().unwrap(), &mut display);
         }
-
+        
         let exec_ms = time::precise_time_ns() / 1_000_000;
 
         //Throttle our updates to 30hz
@@ -199,6 +173,32 @@ fn main() {
             let sleep_ms = exec_ms - (start_ms + 33);
             thread::sleep(Duration::from_millis(sleep_ms));
         }
+    }
+}
+
+fn read_frames<T>(node: &mut node::Node, io: &mut T, display: &mut display::Display) where T: io::Read + io::Write {
+    let read = node.recv(io,
+        |header,payload| {
+            use std::str;
+            let msg = match str::from_utf8(payload) {
+                Ok(msg) => {
+                    let line = msg.to_string();
+                    let route = routing::format_route(&header.address_route);
+
+                    route + ": " + line.as_str()
+                },
+                Err(e) => format!("Unable to decode UTF-8 {:?}", e)
+            };
+
+            display.push_message(&msg);
+        },
+        |_,_| {
+
+        });
+
+    match read {
+        Ok(()) => (),
+        Err(e) => error!("Tried to read bytes from serial port but IO error occurred: {:?}", e)
     }
 }
 
@@ -237,54 +237,7 @@ fn configure_port(name: &std::ffi::OsStr, baud: Option<usize>) -> serial::Result
     Ok(port)
 }
 
-fn read_frame(pending: &mut Vec<u8>, pending_bytes: &mut usize) -> Option<String> {
-    trace!("Reading wire frame {:?}", &pending[..*pending_bytes]);
-    let mut kiss_frame = vec!();
-    match kiss::decode(pending.iter().cloned().take(*pending_bytes), &mut kiss_frame) {
-        Some(frame) => {
-            debug!("Decoded KISS frame {:?}", &kiss_frame);
-
-            let mut nbp_payload = vec!();
-            nbp_payload.resize(frame::MTU, 0);
-            let result = match frame::from_bytes(&mut io::Cursor::new(&kiss_frame), &mut nbp_payload, frame.payload_size) {
-                Ok(nbp_frame) => {
-                    match nbp_frame {
-                        (frame::Frame::Data(header), size) => {
-                            let source = routing::format_route(&header.address_route);
-
-                            match std::str::from_utf8(&nbp_payload[..size]) {
-                                Ok(msg) => {
-                                    Some(format!("{}: {}", source, msg.trim()))
-                                },
-                                Err(e) => {
-                                    error!("{}: Malformed UTF-8 error: {}", source, e);
-                                    None
-                                }
-                            }
-                        },
-                        (frame::Frame::Ack(header),_) => {
-                            Some(format!("{}: {} ACK", header.prn, address::decode(header.src_addr).into_iter().cloned().collect::<String>()))
-                        }
-                    }
-                },
-                Err(e) => {
-                    error!("Unable to parse NBP frame: {:?}", e);
-                    None
-                }
-            };
-
-            //Remove the data we parsed
-            assert!(frame.bytes_read >= *pending_bytes);
-            pending.drain(..*pending_bytes);
-            *pending_bytes -= frame.bytes_read;
-
-            result
-        },
-        None => None  //Nothing decoded yet, we need more data
-    }
-}
-
-fn send_frame(prn: &mut prn_id::PRN, input: &String, port: &mut io::Write) -> Result<(), io::ErrorKind> {
+fn send_frame(node: &mut node::Node, input: &String, port: &mut io::Write) -> Result<(), node::SendError> {
     let (dest, message) = match input.find(' ') {
         Some(split) => {
             let (addr, msg) = input.split_at(split);
@@ -296,15 +249,7 @@ fn send_frame(prn: &mut prn_id::PRN, input: &String, port: &mut io::Write) -> Re
                         .map(|value| Ok(value))
                         .unwrap_or(Err(format!("Unable to encode {} as callsign", path)))
                 })
-                .collect::<Result<Vec<_>, _>>()
-                .map(|route| {
-                    //We need to propertly format our address to contain src SEP route
-                    iter::once(prn.callsign)
-                        .chain(iter::once(routing::ADDRESS_SEPARATOR))
-                        .chain(route)
-                        .collect::<Vec<u32>>()
-                });
-                
+                .collect::<Result<Vec<_>, _>>();
 
             (path, msg.as_bytes())
         },
@@ -315,26 +260,7 @@ fn send_frame(prn: &mut prn_id::PRN, input: &String, port: &mut io::Write) -> Re
     };
 
     match dest {
-        Ok(dest) => {
-            let frame = match frame::new_data(prn, dest.iter().cloned()) {
-                Err(e) => {
-                    error!("Unable to create frame: {:?}", e);
-                    return Ok(())
-                }
-                Ok(frame) => frame
-            };
-
-            let mut full_frame = vec!();
-            try!(frame::to_bytes(&mut full_frame, &frame::Frame::Data(frame), Some(message)).map_err(|_| io::ErrorKind::InvalidData));
-            debug!("Encoding KISS frame {:?}", &full_frame);
-            
-            //Encode into kiss frame
-            let mut kiss_frame = vec!();
-            kiss::encode(&mut io::Cursor::new(full_frame), &mut kiss_frame, 0).unwrap();
-
-            trace!("Sending frame over the wire {:?}", &kiss_frame);
-            return port.write_all(&kiss_frame).map_err(|err| err.kind())
-        },
+        Ok(dest) => node.send(message.iter().cloned(), dest.iter().cloned(), &mut util::new_write_dispatch(port)).map(|_| ()),
         Err(msg) => {
             error!("{}", msg);
             return Ok(())

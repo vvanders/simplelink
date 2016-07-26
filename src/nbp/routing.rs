@@ -62,11 +62,21 @@ pub fn advance(route: &Route, this_addr: u32) -> Result<Route, ParseError> {
 /// Decodes a route with the format CALLSIGN1 -> CALLSIGN2 -> etc
 pub fn format_route(route: &[u32; 17]) -> String {
     route.into_iter().cloned()
-        //.filter(|addr| *addr != ADDRESS_SEPARATOR)
-        .map(|addr| address::format_addr(addr))
-        .fold(String::new(), |route, addr| {
+        .scan(false, |return_addr, addr| {
+            *return_addr = *return_addr || addr == ADDRESS_SEPARATOR;
+            Some((*return_addr, addr))
+        })
+        .filter(|&(_, addr)| addr != ADDRESS_SEPARATOR)
+        .map(|(return_addr, addr)| (return_addr, address::format_addr(addr)))
+        .fold(String::new(), |route, (return_addr, addr)| {
             if route.len() > 0 {
-                route + " -> " + addr.as_str()
+                let sep = if return_addr {
+                    " -> "
+                } else {
+                    " <- "
+                };
+
+                route + sep + addr.as_str()
             } else {
                 addr
             }
