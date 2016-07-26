@@ -14,7 +14,7 @@ use std::time::Duration;
 use std::io;
 use std::thread;
 
-use nbplink::nbp::{address, routing, node};
+use nbplink::nbp::{address, frame, routing, node};
 use nbplink::util;
 
 fn main() {
@@ -157,7 +157,7 @@ fn main() {
         }
 
         if echo {
-            read_frames(&mut node, &mut util::new_read_write_dispatch(&mut echo_tx, &mut echo_rx), &mut display);
+            read_frames(&mut node, &mut util::new_read_write_dispatch(&mut echo_rx, &mut echo_tx), &mut display);
 
             //Swap so we read output on next tick
             echo_rx = echo_tx;
@@ -169,32 +169,48 @@ fn main() {
         let exec_ms = time::precise_time_ns() / 1_000_000;
 
         //Throttle our updates to 30hz
-        if start_ms + 33 < exec_ms {
-            let sleep_ms = exec_ms - (start_ms + 33);
+        const UPDATE_RATE_MS: u64 = 33;
+        if exec_ms - start_ms < UPDATE_RATE_MS {
+            let sleep_ms = UPDATE_RATE_MS - (exec_ms - start_ms);
             thread::sleep(Duration::from_millis(sleep_ms));
         }
     }
 }
 
+fn format_data(header: &frame::DataHeader, payload: &[u8]) -> String {
+    use std::str;
+    match str::from_utf8(payload) {
+        Ok(msg) => {
+            let line = msg.to_string();
+            let route = routing::format_route(&header.address_route);
+
+            route + ": " + line.as_str()
+        },
+        Err(e) => format!("Unable to decode UTF-8 {:?}", e)
+    }
+}
+
 fn read_frames<T>(node: &mut node::Node, io: &mut T, display: &mut display::Display) where T: io::Read + io::Write {
+    let mut obs_msg = vec!();
     let read = node.recv(io,
         |header,payload| {
-            use std::str;
-            let msg = match str::from_utf8(payload) {
-                Ok(msg) => {
-                    let line = msg.to_string();
-                    let route = routing::format_route(&header.address_route);
-
-                    route + ": " + line.as_str()
-                },
-                Err(e) => format!("Unable to decode UTF-8 {:?}", e)
-            };
-
-            display.push_message(&msg);
+            display.push_message(&format_data(header, payload));
         },
-        |_,_| {
-
+        |header,payload| {
+            match header {
+                &frame::Frame::Data(header) => {
+                    let msg = format_data(&header, payload);
+                    obs_msg.push(format!("OBS - {}", msg));
+                },
+                &frame::Frame::Ack(header) => {
+                    obs_msg.push(format!("OBS - ACK {} {}", header.prn, address::format_addr(header.src_addr)));
+                }
+            }
         });
+
+    for msg in obs_msg {
+        display.push_message(&msg);
+    }
 
     match read {
         Ok(()) => (),

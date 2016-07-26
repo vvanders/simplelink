@@ -464,7 +464,7 @@ fn test_route() {
     for _ in 0..CALL_COUNT {
         for (i,node) in nodes.iter_mut().enumerate() {
             node.recv(&mut util::new_read_write_dispatch(&mut io::Cursor::new(&rx_frame), &mut tx_frame),
-                |header,data| {
+                |_,data| {
                     recv[i] += 1;
                     assert!((0..128).eq(data.iter().cloned()));
                 },
@@ -539,7 +539,7 @@ fn test_broadcast_route() {
     for _ in 0..CALL_COUNT {
         for (i,node) in nodes.iter_mut().enumerate() {
             node.recv(&mut util::new_read_write_dispatch(&mut io::Cursor::new(&rx_frame), &mut tx_frame),
-                |header,data| {
+                |_,data| {
                     recv[i] += 1;
                     assert!((0..128).eq(data.iter().cloned()));
                 },
@@ -601,7 +601,7 @@ fn test_split_path() {
 
     let mut tx = vec!();
     node.recv(&mut util::new_read_write_dispatch(&mut io::Cursor::new(&left_packet), &mut tx),
-        |header,data| {
+        |header,_| {
             rx_count += 1;
             assert_eq!(header.content_prn, Some(content_prn));
         },
