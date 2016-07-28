@@ -1,16 +1,16 @@
 [package]
-name = "nbplink"
+name = "nbpconsole"
 version = "0.1.0"
 authors = ["Val Vanderschaegen <valere.vanderschaegen@gmail.com>"]
 
 [dependencies]
-byteorder = "0.5"
+nbplink = { path = "../" }
+serial = "0.3"
 log = "0.3.6"
-fern = "0.3.5"
 time = "0.1.35"
-rand = "0.3.14"
+clap = "2.9.0"
 pdcurses-sys = "0.3.0"
 
-[lib]
-name = "nbplink"
-path = "src/lib.rs"
+[[bin]]
+name = "nbpconsole"
+path = "src/main.rs"

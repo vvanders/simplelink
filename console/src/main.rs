@@ -1,11 +1,11 @@
 extern crate clap;
 extern crate serial;
 extern crate pdcurses;
-extern crate nbplink;
+extern crate time;
 #[macro_use]
 extern crate log;
-extern crate fern;
-extern crate time;
+
+extern crate nbplink;
 
 mod echo;
 mod display;
@@ -57,7 +57,7 @@ fn main() {
     {
         let debug = match matches.value_of("debug") {
             Some(debug) => debug,
-            None => "Infp"
+            None => "Info"
         };
 
         let filter = match debug.to_lowercase().as_str() {
