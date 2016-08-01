@@ -25,7 +25,7 @@ fn main() {
         .about("Command line interface for sending and recieving packets with the NBP protocol")
         .arg(clap::Arg::with_name("port")
             .required(true)
-            .help("rs232 port of the TNC, ex: 'COM1', '/dev/ttyUSB0'"))
+            .help("rs232 port of the TNC, ex: 'COM1', '/dev/ttyUSB0' or TCP/IP port, ex :'localhost:8001'"))
         .arg(clap::Arg::with_name("callsign")
             .required(true)
             .help("User's callsign, must be less than 7 letters+numbers, ex: 'KI7EST'"))
@@ -73,7 +73,7 @@ fn main() {
         nbplink::util::init_log(filter);
     }
 
-    let port = matches.value_of_os("port").expect("No port specified");
+    let port = matches.value_of_os("port");
     let callsign = matches.value_of("callsign").expect("No callsign specified");
     let baud = matches.value_of("baud").and_then(|baud| baud.parse::<usize>().map(|r| Some(r)).unwrap_or(None));
 
@@ -81,43 +81,6 @@ fn main() {
         Some(cmds) => cmds.collect::<Vec<&str>>(),
         None => vec!()
     };
-
-    let echo = matches.is_present("echo");
-
-    let mut echo_tx = echo::new();
-    let mut echo_rx = echo::new();
-    let mut port = if !echo {
-        Some(match configure_port(port, baud) {
-            Ok(port) => port,
-            Err(e) => {
-                match e.kind() {
-                    serial::ErrorKind::NoDevice => error!("Unable to open port, no device found for {:?}", port),
-                    serial::ErrorKind::InvalidInput => error!("Unable to open port, {:?} is not a valid device name", port),
-                    serial::ErrorKind::Io(io_e) => error!("Unable to open port, IO error: {:?}", io_e)
-                }
-                return
-            }
-        })
-    } else {
-        None
-    };
-
-    for cmd in cmds {
-        let write_port: &mut io::Write = if echo {
-            &mut echo_tx
-        } else {
-            port.as_mut().unwrap()
-        };
-        
-        let write_cmd = cmd.to_string() + "\n";
-
-        match write_port.write_all(write_cmd.as_bytes()) {
-            Ok(_) => info!("Sending '{}' to TNC", cmd),
-            Err(e) => {
-                error!("Unable to send '{}' to TNC {:?}", cmd, e);
-            }
-        }
-    }
 
     let callsign_id = match address::encode(string_to_addr(callsign)) {
         Some(prn) => prn,
@@ -127,6 +90,81 @@ fn main() {
         }
     };
 
+    if matches.is_present("echo") {
+        let echo = echo::new();
+        main_loop(echo, callsign_id);
+    } else {
+        match port {
+            Some(port) => {
+                let tcp = port.to_str().and_then(|port| {
+                    if port.find(":").is_some() {
+                        Some(port)
+                    } else {
+                        None
+                    }
+                });
+
+                match tcp {
+                    Some(addr) => {
+                        use std::net::TcpStream;
+                        match TcpStream::connect(addr) {
+                            Ok(port) => {
+                                match port.set_nonblocking(true) {
+                                    Err(e) => {
+                                        error!("Unable to make TCP connection nonblocking {}", e);
+                                        return;
+                                    },
+                                    _ => ()
+                                }
+
+                                main_loop(port, callsign_id);
+                            },
+                            Err(e) => {
+                                error!("Unable to open TCP connection {}", e);
+                                return
+                            } 
+                        }
+                    },
+                    None => {
+                        let serial_port = match configure_port(port, baud) {
+                            Ok(mut port) => {
+                                for cmd in cmds {
+                                    let write_cmd = cmd.to_string() + "\n";
+
+                                    use std::io::Write;
+                                    match port.write_all(write_cmd.as_bytes()) {
+                                        Ok(_) => info!("Sending '{}' to TNC", cmd),
+                                        Err(e) => {
+                                            error!("Unable to send '{}' to TNC {:?}", cmd, e);
+                                        }
+                                    }
+                                }
+
+                                port
+                            },
+                            Err(e) => {
+                                match e.kind() {
+                                    serial::ErrorKind::NoDevice => error!("Unable to open port, no device found for {:?}", port),
+                                    serial::ErrorKind::InvalidInput => error!("Unable to open port, {:?} is not a valid device name", port),
+                                    serial::ErrorKind::Io(io_e) => error!("Unable to open port, IO error: {:?}", io_e)
+                                }
+                                return
+                            }
+                        };
+
+                        main_loop(serial_port, callsign_id);
+                    }
+                }
+            },
+            None => {
+                error!("No port and echo not specifed, aborting");
+                return
+            }
+        }
+    };
+}
+
+fn main_loop<P>(mut port: P, callsign_id: u32) where P: io::Read + io::Write {
     let mut display = display::new();
     let mut node = node::new(callsign_id);
 
@@ -138,13 +176,7 @@ fn main() {
                 match input.len() {
                     0 => (),
                     _ => {
-                        let write_port: &mut io::Write = if echo {
-                            &mut echo_tx
-                        } else {
-                            port.as_mut().unwrap()
-                        };
-
-                        match send_frame(&mut node, &input, write_port) {
+                        match send_frame(&mut node, &input, &mut port) {
                             Ok(_) => (),
                             Err(e) => {
                                 error!("Unable to send frame: {:?}", e);
@@ -156,16 +188,8 @@ fn main() {
             None => ()
         }
 
-        if echo {
-            read_frames(&mut node, &mut util::new_read_write_dispatch(&mut echo_rx, &mut echo_tx), &mut display);
+        read_frames(&mut node, &mut port, &mut display);
 
-            //Swap so we read output on next tick
-            echo_rx = echo_tx;
-            echo_tx = echo::new();
-        } else {
-            read_frames(&mut node, port.as_mut().unwrap(), &mut display);
-        }
-        
         let exec_ms = time::precise_time_ns() / 1_000_000;
 
         //Throttle our updates to 30hz
@@ -191,26 +215,24 @@ fn format_data(header: &frame::DataHeader, payload: &[u8]) -> String {
 }
 
 fn read_frames<T>(node: &mut node::Node, io: &mut T, display: &mut display::Display) where T: io::Read + io::Write {
-    let mut obs_msg = vec!();
+    use std::cell;
+
+    let cell_display = cell::RefCell::new(display);
     let read = node.recv(io,
         |header,payload| {
-            display.push_message(&format_data(header, payload));
+            (*cell_display.borrow_mut()).push_message(&format_data(header, payload));
         },
         |header,payload| {
             match header {
                 &frame::Frame::Data(header) => {
                     let msg = format_data(&header, payload);
-                    obs_msg.push(format!("OBS - {}", msg));
+                    (*cell_display.borrow_mut()).push_message(&format!("OBS - DATA {} {}", header.prn, msg));
                 },
                 &frame::Frame::Ack(header) => {
-                    obs_msg.push(format!("OBS - ACK {} {}", header.prn, address::format_addr(header.src_addr)));
+                    (*cell_display.borrow_mut()).push_message(&format!("OBS - ACK {} {}", header.prn, address::format_addr(header.src_addr)));
                 }
             }
         });
-
-    for msg in obs_msg {
-        display.push_message(&msg);
-    }
 
     match read {
         Ok(()) => (),
