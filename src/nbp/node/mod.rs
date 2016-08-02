@@ -222,10 +222,12 @@ impl Node {
                         let mut payload: [u8; frame::MTU] = unsafe { mem::uninitialized() };
                         let (packet, payload_size) = try!(frame::from_bytes(&mut io::Cursor::new(&self.kiss_frame_scratch[..decoded.payload_size]), &mut payload, decoded.payload_size));
                         
-                        try!(self.dispatch_recv(rx_tx, &packet, &payload[..payload_size], &mut recv_drain, &mut observe_drain));
+                        let result = self.dispatch_recv(rx_tx, &packet, &payload[..payload_size], &mut recv_drain, &mut observe_drain);
 
-                        //Clear recieved
+                        //Clear recieved, make sure we do this even on error
                         self.recv_buffer.drain(..decoded.bytes_read);
+
+                        try!(result);
                     },
                     None => break
                 }
