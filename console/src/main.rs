@@ -236,7 +236,13 @@ fn read_frames<T>(node: &mut node::Node, io: &mut T, display: &mut display::Disp
 
     match read {
         Ok(()) => (),
-        Err(e) => error!("Tried to read bytes from serial port but IO error occurred: {:?}", e)
+        Err(e) => {
+            match e {
+                node::RecvError::Io(ref e) if e.raw_os_error().map(|os| os == 10035).unwrap_or(false) => (),
+                node::RecvError::Io(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
+                e => error!("Tried to read bytes from serial port but IO error occurred: {:?}", e)
+            }
+        }
     }
 }
 
