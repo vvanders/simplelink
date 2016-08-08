@@ -220,10 +220,13 @@ impl Node {
                 match kiss::decode(self.recv_buffer.iter().cloned(), &mut self.kiss_frame_scratch) {
                     Some(decoded) => {
                         let mut payload: [u8; frame::MTU] = unsafe { mem::uninitialized() };
-                        let (packet, payload_size) = try!(frame::from_bytes(&mut io::Cursor::new(&self.kiss_frame_scratch[..decoded.payload_size]), &mut payload, decoded.payload_size));
+                        let result = match frame::from_bytes(&mut io::Cursor::new(&self.kiss_frame_scratch[..decoded.payload_size]), &mut payload, decoded.payload_size) {
+                            Ok((packet, payload_size)) => {
+                                self.dispatch_recv(rx_tx, &packet, &payload[..payload_size], &mut recv_drain, &mut observe_drain)
+                            },
+                            Err(e) => Err(e).map_err(|e| RecvError::Frame(e))
+                        };
                         
-                        let result = self.dispatch_recv(rx_tx, &packet, &payload[..payload_size], &mut recv_drain, &mut observe_drain);
-
                         //Clear recieved, make sure we do this even on error
                         self.recv_buffer.drain(..decoded.bytes_read);
 
@@ -619,4 +622,40 @@ fn test_split_path() {
     
     assert_eq!(rx_count, 1);
     assert_eq!(obs_count, 2);
+}
+
+#[test]
+fn test_recv_bad_data() {
+    let prn = prn_id::new(address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap());
+
+    for i in 0..frame::MTU+2 {
+        let mut node = new(prn.callsign);
+
+        let bad_data = (0..i).map(|x| x as u8).collect::<Vec<_>>();
+        let mut bad_kiss = vec!();
+        kiss::encode(&mut io::Cursor::new(bad_data), &mut bad_kiss, 0).unwrap();
+
+        let result = node.recv(&mut util::new_read_write_dispatch(&mut io::Cursor::new(bad_kiss), &mut vec!()),
+            |_,_| {},
+            |_,_| {});
+
+        match result {
+            Ok(()) => assert!(false),
+            _ => ()
+        }
+
+        let mut packet = vec!();
+        use std::iter;
+        node.send((0..5).map(|x| x as u8), iter::once(prn.callsign), &mut util::new_read_write_dispatch(&mut io::Cursor::new(vec!()), &mut packet)).unwrap();
+
+        node.recv(&mut util::new_read_write_dispatch(&mut io::Cursor::new(packet), &mut vec!()),
+            |_,data| {
+                for i in 0..5 {
+                    assert_eq!(data[i], i as u8);
+                }
+            },
+            |_,_| {
+
+            }).unwrap();
+    }
 }

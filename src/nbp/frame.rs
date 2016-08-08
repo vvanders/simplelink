@@ -180,13 +180,23 @@ pub fn from_bytes<T>(bytes: &mut T, out_payload: &mut [u8], size: usize) -> Resu
             }
         }
 
+        let header_size = 4 + addr_len * 4 + 2;
+
+        if size < header_size {
+            return Err(ReadError::IO(io::Error::new(io::ErrorKind::InvalidData, "Packet was malformed")))
+        } 
+
         //size - (PRN + ADDR size + CRC)
-        let mut payload_size = size - (4 + addr_len * 4 + 2);
+        let mut payload_size = size - header_size;
 
         //If we're just doing point to point then we don't have a content prn
         let has_content_prn = addr_len != 4;
 
         let content_prn = if has_content_prn {
+            if payload_size < 4 {
+                return Err(ReadError::IO(io::Error::new(io::ErrorKind::InvalidData, "Packet was malformed")))
+            }
+
             payload_size -= 4;
             Some(try!(read_u32(bytes, &mut crc)))
         } else {
