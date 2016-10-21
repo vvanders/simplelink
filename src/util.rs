@@ -5,11 +5,16 @@ use time;
 use std::io;
 
 pub fn init_log(trace: log::LogLevelFilter) {
+    init_log_callback(trace, |msg: &str, level: &log::LogLevel, _location: &log::LogLocation| {
+            format!("[{}] {}", level, msg)
+        });
+}
+
+pub fn init_log_callback<D>(trace: log::LogLevelFilter, dispatch: D) 
+        where D: Fn(&str, &log::LogLevel, &log::LogLocation) -> String + Send + Sync + 'static {
     //Print is gated by trace level
     let print_logger = fern::DispatchConfig {
-        format: Box::new(|msg: &str, level: &log::LogLevel, _location: &log::LogLocation| {
-            format!("[{}] {}", level, msg)
-        }),
+        format: Box::new(dispatch),
         output: vec![fern::OutputConfig::stdout()],
         level: trace,
     };

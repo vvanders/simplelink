@@ -32,7 +32,7 @@ pub enum QueueError {
 #[derive(Copy, Clone)]
 pub struct PendingPacket {
     /// Packet we're trying to send
-    packet: frame::DataHeader,
+    packet: frame::Frame,
     /// Last time in ms from when we sent it
     next_send: usize,
     /// Number of retry attempts
@@ -53,7 +53,7 @@ pub fn new() -> Queue {
 
 impl Queue {
     /// Enqueue a new frame, called just after we send out a frame over the wire
-    pub fn enqueue(&mut self, header: frame::DataHeader, payload: &[u8]) -> Result<(),QueueError> {
+    pub fn enqueue(&mut self, header: frame::Frame, payload: &[u8]) -> Result<(),QueueError> {
         trace!("Enqueuing frame {} with {} bytes, waiting for ACK", header.prn, payload.len());
 
         if self.data.len() + payload.len() > BLOCK_SIZE {
@@ -98,8 +98,8 @@ impl Queue {
     // Check any packets that have expired, resend is called on packets we want to retry, discard on packets that have exceeded the retry count
     pub fn tick<R,D,E>(&mut self, elapsed_ms: usize, mut retry: R, mut discard: D) -> Result<(),E>
         where
-            R: FnMut(&frame::DataHeader, &[u8]) -> Result<(),E>,
-            D: FnMut(&frame::DataHeader, &[u8]),
+            R: FnMut(&frame::Frame, &[u8]) -> Result<(),E>,
+            D: FnMut(&frame::Frame, &[u8]),
             E: fmt::Debug
     {
         trace!("Ticking send queue for {}ms", elapsed_ms);
@@ -196,21 +196,21 @@ use nbp::routing;
 use nbp::address;
 
 #[cfg(test)]
-fn create_sample_packet(prn: &mut prn_id::PRN, size: u32) -> (frame::DataHeader, Vec<u8>) {
+fn create_sample_packet(prn: &mut prn_id::PRN, size: u32) -> (frame::Frame, Vec<u8>) {
     let data = (0..size).map(|value| value as u8).collect::<Vec<u8>>();
     let callsign = prn.callsign;
 
-    let header = frame::new_data(prn, [callsign, routing::ADDRESS_SEPARATOR, callsign].iter().cloned()).unwrap();
+    let header = frame::new_header(prn, [callsign, routing::ADDRESS_SEPARATOR, callsign].iter().cloned()).unwrap();
 
     (header, data)
 }
 
 #[cfg(test)]
-fn create_packet_with<T>(prn: &mut prn_id::PRN, data: T) -> (frame::DataHeader, Vec<u8>) where T: Iterator<Item=u8> {
+fn create_packet_with<T>(prn: &mut prn_id::PRN, data: T) -> (frame::Frame, Vec<u8>) where T: Iterator<Item=u8> {
     let data = data.collect::<Vec<u8>>();
     let callsign = prn.callsign;
 
-    let header = frame::new_data(prn, [callsign, routing::ADDRESS_SEPARATOR, callsign].iter().cloned()).unwrap();
+    let header = frame::new_header(prn, [callsign, routing::ADDRESS_SEPARATOR, callsign].iter().cloned()).unwrap();
 
     (header, data)
 }

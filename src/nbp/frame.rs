@@ -4,44 +4,24 @@ use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian};
 use nbp::crc16;
 use nbp::prn_id;
 use nbp::routing;
-use nbp::address;
 
 /// MTU of payload
 pub const MTU: usize = 1500;
 
-/// Max size for a packet
-pub const MAX_PACKET_SIZE: usize = MTU + 4 + 4 + 4 * 18 + 2;
+/// Max size for an ack (Data + PRN + (Addr + delim) + CRC)
+pub const MAX_ACK_SIZE: usize = 4 + 4 * (routing::MAX_LENGTH + 1) + 2;
 
-/// Max size of an ack packet
-pub const MAX_ACK_SIZE: usize = 4 + 4 + 2;
+/// Max size for a packet (Data + PRN + Addr + CRC)
+pub const MAX_PACKET_SIZE: usize = MAX_ACK_SIZE + MTU;
 
-/// Represents a single NBP Ack Frame
+/// Represents a single NBP Frame. NBP has two types of frames, data and ack frames.
+/// And header with zero size is an ACK frame.
 #[derive(Copy,Clone,Eq,PartialEq,Debug)]
-pub struct AckHeader {
-    /// Pseudo-Random unique identifier that this packet is an ack for.
-    pub prn: u32,
-    /// Source station that acknowledged the packet.
-    pub src_addr: u32
-}
-
-/// Represents a single NBP Data Frame
-#[derive(Copy,Clone,Eq,PartialEq,Debug)]
-pub struct DataHeader {
+pub struct Frame {
     /// Pseudo-Random unique identifier for this packet. This is combination of PRN + XOR of callsign.
     pub prn: u32,
     /// Forward and return address routing. Each path can contain up to 16 addresses plus a single separator.
-    pub address_route: routing::Route,
-    /// Psuedo-Random unqiue identifier for the content in this packet. Needed to handle any multi-route broadcast so that
-    /// we don't have duplicate packets at the other endpoint. Note that if we only have two addresses we omit this since
-    /// the base prn can function both as packet and content prn.
-    pub content_prn: Option<u32>
-}
-
-/// All possible NBP frames
-#[derive(Copy,Clone)]
-pub enum Frame {
-    Data(DataHeader),
-    Ack(AckHeader)
+    pub address_route: routing::Route
 }
 
 /// Error cases for converting from raw bytes to a frame.
@@ -73,21 +53,20 @@ pub enum WriteError {
     IO(io::Error)
 }
 
-/// Constructs a new ACK frame
-pub fn new_ack(prn: u32, src_addr: u32) -> AckHeader {
-    AckHeader {
+// Constructs a new ack frame
+pub fn new_ack(prn: u32, dest: routing::Route) -> Frame {
+    Frame {
         prn: prn,
-        src_addr: src_addr
+        address_route: dest
     }
 }
 
 /// Constructs a new data frame
-pub fn new_data<T>(prn: &mut prn_id::PRN, dest: T) -> Result<DataHeader, EncodeError> where T: Iterator<Item=u32> {
+pub fn new_header<T>(prn: &mut prn_id::PRN, dest: T) -> Result<Frame, EncodeError> where T: Iterator<Item=u32> {
     let mut addr: routing::Route = [0; routing::MAX_LENGTH];
 
     //Encode and look for valid addr
     let mut found_sep = false;
-    let mut content_prn = None;
     for (i, dest_addr) in dest.enumerate() {
         if i == routing::MAX_LENGTH {
             return Err(EncodeError::AddressTooLong)
@@ -96,20 +75,14 @@ pub fn new_data<T>(prn: &mut prn_id::PRN, dest: T) -> Result<DataHeader, EncodeE
         found_sep = found_sep || dest_addr == routing::ADDRESS_SEPARATOR;
 
         addr[i] = dest_addr;
-
-        //More than two addresses(plus sep) means we need a content prn
-        if i == 3 {
-            content_prn = Some(prn.next());
-        }
     }
 
     if !found_sep {
         return Err(EncodeError::AddressSeparatorNotFound)
     }
 
-    Ok(DataHeader {
+    Ok(Frame {
         prn: prn.next(),
-        content_prn: content_prn,
         address_route: addr
     })
 }
@@ -133,101 +106,74 @@ pub fn from_bytes<T>(bytes: &mut T, out_payload: &mut [u8], size: usize) -> Resu
 
     debug!("Decoding frame with PRN {} size {}", prn, size);
 
-    //If we have just a PRN, addr and CRC this is an ack frame
-    let frame = if size == 4 + 4 + 2 {
-        let addr = try!(read_u32(bytes, &mut crc));
+    //Scan in our address. We're looking for u32+, 0x0, u32+, 0x0.
+    let mut addr_marker = 0;
+    let mut addr = [0; routing::MAX_LENGTH];
+    let mut addr_len = 0;
 
-        debug!("Read ACK frame with PRN {} Callsign {}", prn, address::format_addr(addr));
+    debug!("Decoding routing address");
 
-        (Frame::Ack(AckHeader {
-            prn: prn,
-            src_addr: addr
-        }), 0)
-    } else {
-        //Scan in our address. We're looking for u32+, 0x0, u32+, 0x0.
-        let mut addr_marker = 0;
-        let mut addr = [0; routing::MAX_LENGTH];
-        let mut addr_len = 0;
+    for _ in 0..routing::MAX_LENGTH {
+        let value = try!(read_u32(bytes, &mut crc));
 
-        debug!("Decoding routing address");
-
-        for _ in 0..routing::MAX_LENGTH {
-            let value = try!(read_u32(bytes, &mut crc));
-
-            if value == routing::ADDRESS_SEPARATOR {
-                addr_marker += 1;
-            }
-
-            addr[addr_len] = value;
-            addr_len += 1;
-
-            if addr_marker == 2 {
-                trace!("End of addr, len {}", addr_len);
-                break;
-            }
+        if value == routing::ADDRESS_SEPARATOR {
+            addr_marker += 1;
         }
 
-        //If we saw 17 values that means that the 18th one must be a 0x0 separator, otherwise this is malformed
-        if addr_len == routing::MAX_LENGTH && addr_marker != 2 {
-            let value = try!(read_u32(bytes, &mut crc));
-            addr_len += 1;
+        addr[addr_len] = value;
+        addr_len += 1;
 
+        if addr_marker == 2 {
             trace!("End of addr, len {}", addr_len);
-
-            if value != 0 {
-                error!("Malformed address in packet {}, {:?}", prn, addr);
-                err = Some(ReadError::BadAddress);
-            }
+            break;
         }
+    }
 
-        let header_size = 4 + addr_len * 4 + 2;
+    //If we saw 17 values that means that the 18th one must be a 0x0 separator, otherwise this is malformed
+    if addr_len == routing::MAX_LENGTH && addr_marker != 2 {
+        let value = try!(read_u32(bytes, &mut crc));
+        addr_len += 1;
 
-        if size < header_size {
-            return Err(ReadError::IO(io::Error::new(io::ErrorKind::InvalidData, "Packet was malformed")))
-        } 
+        trace!("End of addr, len {}", addr_len);
 
-        //size - (PRN + ADDR size + CRC)
-        let mut payload_size = size - header_size;
-
-        //If we're just doing point to point then we don't have a content prn
-        let has_content_prn = addr_len != 4;
-
-        let content_prn = if has_content_prn {
-            if payload_size < 4 {
-                return Err(ReadError::IO(io::Error::new(io::ErrorKind::InvalidData, "Packet was malformed")))
-            }
-
-            payload_size -= 4;
-            Some(try!(read_u32(bytes, &mut crc)))
-        } else {
-            None
-        };
-
-        debug!("Decode payload of {} bytes", payload_size);
-
-        if payload_size > out_payload.len() {
-            error!("Payload exceeded output buffer size {} > {} in packet {}", payload_size, out_payload.len(), prn);
-            err = Some(ReadError::Truncated);
+        if value != 0 {
+            error!("Malformed address in packet {}, {:?}", prn, addr);
+            err = Some(ReadError::BadAddress);
         }
+    }
 
-        use std::io::Read;
-        try!(bytes.take(payload_size as u64).read(out_payload).map_err(|e| ReadError::IO(e)));
+    let header_size = 4 + addr_len * 4 + 2;
 
-        trace!("Read payload");
+    if size < header_size {
+        return Err(ReadError::IO(io::Error::new(io::ErrorKind::InvalidData, "Packet was malformed")))
+    } 
 
-        //Update CRC
-        crc = out_payload[..payload_size].iter().fold(crc, |crc, byte| {
-            crc16::update_u8(*byte, crc)
-        });
+    //size - (PRN + ADDR size + CRC)
+    let payload_size = size - header_size;
 
-        debug!("Read DATA frame with PRN {} Callsign {}", prn, routing::format_route(&addr));
+    debug!("Decode payload of {} bytes", payload_size);
 
-        (Frame::Data(DataHeader{
-            prn: prn,
-            content_prn: content_prn,
-            address_route: addr
-        }), payload_size)
-    };
+    if payload_size > out_payload.len() {
+        error!("Payload exceeded output buffer size {} > {} in packet {}", payload_size, out_payload.len(), prn);
+        err = Some(ReadError::Truncated);
+    }
+
+    use std::io::Read;
+    try!(bytes.take(payload_size as u64).read(out_payload).map_err(|e| ReadError::IO(e)));
+
+    trace!("Read payload");
+
+    //Update CRC
+    crc = out_payload[..payload_size].iter().fold(crc, |crc, byte| {
+        crc16::update_u8(*byte, crc)
+    });
+
+    debug!("Read DATA frame with PRN {} Callsign {}", prn, routing::format_route(&addr));
+
+    let frame = (Frame {
+        prn: prn,
+        address_route: addr
+    }, payload_size);
 
     crc = crc16::finish(crc);
 
@@ -258,62 +204,43 @@ fn write_u32<T>(value: u32, bytes: &mut T, crc: &mut crc16::CRC) -> Result<usize
 pub fn to_bytes<T>(bytes: &mut T, frame: &Frame, payload: Option<&[u8]>) -> Result<usize, WriteError> where T: io::Write {
     let mut crc = crc16::new();
     let mut size = 0;
-    match frame {
-        &Frame::Data(ref data_frame) => {
-            debug!("Encoding DATA frame {} to bytes", data_frame.prn);
 
-            //Start with PRN
-            size += try!(write_u32(data_frame.prn, bytes, &mut crc));
+    debug!("Encoding DATA frame {} to bytes", frame.prn);
 
-            //Address follows, it's in for format of <source>, 0x0, <dest>, 0x0
-            let mut delim_count = 0;
-            for addr in data_frame.address_route.iter() {
-                if *addr == routing::ADDRESS_SEPARATOR {
-                    delim_count += 1;
-                }
+    //Start with PRN
+    size += try!(write_u32(frame.prn, bytes, &mut crc));
 
-                size += try!(write_u32(*addr, bytes, &mut crc));
+    //Address follows, it's in for format of <source>, 0x0, <dest>, 0x0
+    let mut delim_count = 0;
+    for addr in frame.address_route.iter() {
+        if *addr == routing::ADDRESS_SEPARATOR {
+            delim_count += 1;
+        }
 
-                //If we found the last delimiter we are done
-                if delim_count == 2 {
-                    break;
-                }
-            }
+        size += try!(write_u32(*addr, bytes, &mut crc));
 
-            //If we only saw one delimiter then we need to manually include the trailing one
-            if delim_count == 1 {
-                size += try!(write_u32(routing::ADDRESS_SEPARATOR, bytes, &mut crc));
-            }
+        //If we found the last delimiter we are done
+        if delim_count == 2 {
+            break;
+        }
+    }
 
-            match data_frame.content_prn {
-                Some(content_prn) => {
-                    size += try!(write_u32(content_prn, bytes, &mut crc));
-                },
-                None => ()
-            }
+    //If we only saw one delimiter then we need to manually include the trailing one
+    if delim_count == 1 {
+        size += try!(write_u32(routing::ADDRESS_SEPARATOR, bytes, &mut crc));
+    }
 
-            //Handle the actual payload
-            match payload {
-                Some(data) => {
-                    try!(bytes.write_all(data).map_err(|e| WriteError::IO(e)));
-                    size += data.len();
+    //Handle the actual payload
+    match payload {
+        Some(data) => {
+            try!(bytes.write_all(data).map_err(|e| WriteError::IO(e)));
+            size += data.len();
 
-                    for byte in data {
-                        crc = crc16::update_u8(*byte, crc);
-                    }
-                },
-                None => ()
+            for byte in data {
+                crc = crc16::update_u8(*byte, crc);
             }
         },
-        &Frame::Ack(ref ack_frame) => {
-            debug!("Encoding ACK frame {} to bytes", ack_frame.prn);
-
-            //Start with PRN
-            size += try!(write_u32(ack_frame.prn, bytes, &mut crc));
-
-            //Only include this station's callsign since we need that to comply with FCC Part 97. If our last trasmission is an ACK it must include our callsign
-            size += try!(write_u32(ack_frame.src_addr, bytes, &mut crc));
-        }
+        None => ()
     }
 
     //Last part of the packet is our CRC
@@ -327,24 +254,28 @@ pub fn to_bytes<T>(bytes: &mut T, frame: &Frame, payload: Option<&[u8]>) -> Resu
     Ok(size)
 }
 
+#[cfg(test)]
+use nbp::address;
+
 #[test]
 fn serialize_ack_test() {
     use std::io::Cursor;
 
     let mut prn = prn_id::new(address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap());
-    let ack = new_ack(prn.next(), prn.callsign);
+    let ack = new_ack(prn.next(), routing::gen_route(&[prn.callsign, routing::ADDRESS_SEPARATOR, prn.callsign]));
 
     let mut data = vec!();
 
-    let count = to_bytes(&mut data, &Frame::Ack(ack.clone()), None).unwrap();
-    assert_eq!(count, 4 + 4 + 2);
+    let count = to_bytes(&mut data, &ack, None).unwrap();
+    assert_eq!(count, 4 + 4 * 4 + 2);
 
     let mut reader = Cursor::new(data);
     let mut payload = [0; MTU];
-    match from_bytes(&mut reader, &mut payload, count).unwrap() {
-        (Frame::Ack(read_ack),_) => {
-            assert_eq!(read_ack.prn, ack.prn);
-            assert_eq!(read_ack.src_addr, ack.src_addr);
+    match from_bytes(&mut reader, &mut payload, count) {
+        Ok((header, payload_len)) => {
+            assert_eq!(header.prn, ack.prn);
+            assert_eq!(header.address_route, ack.address_route);
+            assert_eq!(payload_len, 0);
         }
         _ => assert!(false)
     }
@@ -356,18 +287,12 @@ use std::iter;
 #[cfg(test)]
 fn serialize_packet(dest: &[u32], payload: &[u8]) -> Vec<u8> {
     let mut prn = prn_id::new(address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap());
-    let data_packet = new_data(&mut prn, dest.iter().cloned()).unwrap();
+    let data_packet = new_header(&mut prn, dest.iter().cloned()).unwrap();
 
     let mut data = vec!();
+    let count = to_bytes(&mut data, &data_packet, Some(payload)).unwrap();
 
-    let count = to_bytes(&mut data, &Frame::Data(data_packet.clone()), Some(payload)).unwrap();
-    let cprn_size = if dest.len() == 3 {
-        0
-    } else {
-        4
-    };
-
-    assert_eq!(count, 4 + 4 * (1 + dest.len()) + cprn_size + payload.len() + 2);
+    assert_eq!(count, 4 + 4 * (1 + dest.len()) + payload.len() + 2);
 
     data
 }
@@ -381,15 +306,15 @@ fn serialize_deserialize_packet(dest: &[u32], payload: &[u8]) {
 
     let mut reader = Cursor::new(data);
     let mut read_payload = [0; MTU];
-    match from_bytes(&mut reader, &mut read_payload, count).unwrap() {
-        (Frame::Data(read_data), size) => {
+    match from_bytes(&mut reader, &mut read_payload, count) {
+        Ok((header, size)) => {
             assert_eq!(size, payload.len());
             for (i, byte) in payload.iter().cloned().enumerate() {
                 assert_eq!(read_payload[i], byte);
             }
 
             for (i, test_addr) in dest.iter().cloned().enumerate() {
-                assert_eq!(read_data.address_route[i], test_addr);
+                assert_eq!(header.address_route[i], test_addr);
             }
         },
         _ => assert!(false)
@@ -524,42 +449,19 @@ fn test_max_size() {
     use std::iter;
     let route = (0..15).map(|_| routing::BROADCAST_ADDRESS)
         .chain(iter::once(routing::ADDRESS_SEPARATOR))
-        .chain(iter::once(prn.callsign));
-    let header = new_data(&mut prn, route).unwrap();
+        .chain(iter::once(prn.callsign))
+        .collect::<Vec<u32>>();
+    let header = new_header(&mut prn, route.iter().cloned()).unwrap();
 
     let mut packet = vec!();
 
-    to_bytes(&mut packet, &Frame::Data(header), Some(&data)).unwrap();
+    to_bytes(&mut packet, &header, Some(&data)).unwrap();
 
     assert_eq!(MAX_PACKET_SIZE, packet.len());
 
-    let ack_header = new_ack(prn.next(), prn.callsign);
+    let ack_header = new_ack(prn.next(), routing::gen_route(route.iter()));
     packet.drain(..);
-    to_bytes(&mut packet, &Frame::Ack(ack_header), None).unwrap();
+    to_bytes(&mut packet, &ack_header, None).unwrap();
 
     assert_eq!(MAX_ACK_SIZE, packet.len());
-}
-
-#[test]
-fn test_content_prn() {
-    let mut prn = prn_id::new(address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap());
-    let addr = prn.callsign;
-    let header_no_prn = new_data(&mut prn, [addr, routing::ADDRESS_SEPARATOR, addr].iter().cloned()).unwrap();
-
-    assert!(header_no_prn.content_prn.is_none());
-
-    let header = new_data(&mut prn, [addr, addr, routing::ADDRESS_SEPARATOR, addr].iter().cloned()).unwrap();
-
-    assert!(header.content_prn.is_some());
-
-    let mut packet = vec!();
-    to_bytes(&mut packet, &Frame::Data(header), None).unwrap();
-
-    let mut decoded = [0; MAX_PACKET_SIZE];
-    let (decoded_header,_) = from_bytes(&mut io::Cursor::new(&packet), &mut decoded, packet.len()).unwrap();
-
-    match decoded_header {
-        Frame::Data(decoded_header) => assert_eq!(decoded_header.content_prn, header.content_prn),
-        _ => assert!(false)
-    }
 }

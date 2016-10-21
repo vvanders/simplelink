@@ -14,7 +14,6 @@ pub struct Node {
     prn: prn_id::PRN,
     
     recv_prn_table: prn_table::Table,
-    recv_content_prn_table: prn_table::Table,
     tx_queue: tx_queue::Queue,
 
     recv_buffer: Vec<u8>,
@@ -105,10 +104,11 @@ impl From<SendError> for RecvError {
 
 /// Constructs a new NBP node that can be used to communicate with other NBP nodes
 pub fn new(callsign: u32) -> Node {
+    trace!("New NBP link created with callsign {:?}", address::decode(callsign));
+
     Node {
         prn: prn_id::new(callsign),
         recv_prn_table: prn_table::new(),
-        recv_content_prn_table: prn_table::new(),
         tx_queue: tx_queue::new(),
         recv_buffer: vec!(),
         kiss_frame_scratch: vec!()
@@ -160,13 +160,13 @@ impl Node {
             .chain(iter::once(routing::ADDRESS_SEPARATOR))
             .chain(iter::once(self.prn.callsign));
 
-        let header = try!(frame::new_data(&mut self.prn, final_route));
+        let header = try!(frame::new_header(&mut self.prn, final_route));
         try!(self.enqueue_frame(header, in_data, tx_drain));
 
         Ok(self.prn.current())
     }
 
-    fn enqueue_frame<T>(&mut self, header: frame::DataHeader, in_data: &[u8], tx_drain: &mut T) -> Result<(), SendError>
+    fn enqueue_frame<T>(&mut self, header: frame::Frame, in_data: &[u8], tx_drain: &mut T) -> Result<(), SendError>
         where T: io::Write
     {
         //Save packet for resend
@@ -183,11 +183,11 @@ impl Node {
         Ok(())
     }
 
-    fn send_frame<T>(&self, header: frame::DataHeader, in_data: &[u8], tx_drain: &mut T) -> Result<(), SendError>
+    fn send_frame<T>(&self, header: frame::Frame, in_data: &[u8], tx_drain: &mut T) -> Result<(), SendError>
         where T: io::Write
     {
         let mut packet_data: [u8; frame::MAX_PACKET_SIZE] = unsafe { mem::uninitialized() };
-        let packet_len = try!(frame::to_bytes(&mut io::Cursor::new(&mut packet_data[..frame::MAX_PACKET_SIZE]), &frame::Frame::Data(header), Some(in_data)));
+        let packet_len = try!(frame::to_bytes(&mut io::Cursor::new(&mut packet_data[..frame::MAX_PACKET_SIZE]), &header, Some(in_data)));
         try!(kiss::encode(&mut io::Cursor::new(&packet_data[..packet_len]), tx_drain, 0));
         trace!("Sent frame {}", header.prn);
 
@@ -198,7 +198,7 @@ impl Node {
     pub fn recv<RW,P,O>(&mut self, rx_tx: &mut RW, mut recv_drain: P, mut observe_drain: O) -> Result<(), RecvError>
         where
             RW: io::Read + io::Write,
-            P: FnMut(&frame::DataHeader, &[u8]),
+            P: FnMut(&frame::Frame, &[u8]),
             O: FnMut(&frame::Frame, &[u8])
     {
         const SCRACH_SIZE: usize = 256;
@@ -244,97 +244,56 @@ impl Node {
     fn dispatch_recv<T,P,O>(&mut self, tx_drain: &mut T, packet: &frame::Frame, payload: &[u8], recv_drain: &mut P, observe_drain: &mut O) -> Result<(), RecvError>
         where 
             T: io::Write,
-            P: FnMut(&frame::DataHeader, &[u8]),
+            P: FnMut(&frame::Frame, &[u8]),
             O: FnMut(&frame::Frame, &[u8])
     {
-        match packet {
-            &frame::Frame::Ack(ack) => {
-                trace!("Recieved ack {}", ack.prn);
-                self.tx_queue.ack_recv(ack.prn);
-            },
-            &frame::Frame::Data(header) => {
-                if routing::is_destination(&header.address_route, self.prn.callsign) {
-                    trace!("Recieved packet with our address in the route {}", header.prn);
+        if routing::is_destination(&packet.address_route, self.prn.callsign) {
+            trace!("Recieved packet with our address in the route {}", packet.prn);
 
-                    //Respond that we've received this packet, broadcast packets don't expect an ack
-                    if !routing::is_broadcast(&header.address_route) {
-                        let ack = frame::new_ack(header.prn, self.prn.callsign);
-                        let mut ack_packet: [u8; frame::MAX_ACK_SIZE] = unsafe { mem::uninitialized() };
-                        let ack_packet_len = try!(frame::to_bytes(&mut io::Cursor::new(&mut ack_packet[..frame::MAX_ACK_SIZE]), &frame::Frame::Ack(ack), None));
-                        try!(kiss::encode(&mut io::Cursor::new(&ack_packet[..ack_packet_len]), tx_drain, 0));
-                        trace!("Sending ack for {}", header.prn);
-                    }
+            //Respond that we've received this packet if we're the final destination, note that
+            //we might ack something we've already receieved since the sender may have not
+            //heard the ack.
+            if routing::final_addr(&packet.address_route) {
+                //If we got an ack packet then pass that along to our tx queue
+                if payload.len() == 0 {
+                    trace!("Recieved ack {}", packet.prn);
+                    self.tx_queue.ack_recv(packet.prn);
+                } else {
+                    let ack = frame::new_ack(packet.prn, routing::reverse(&packet.address_route));
+                    let mut ack_packet: [u8; frame::MAX_ACK_SIZE] = unsafe { mem::uninitialized() };
+                    let ack_packet_len = try!(frame::to_bytes(&mut io::Cursor::new(&mut ack_packet[..frame::MAX_ACK_SIZE]), &ack, None));
+                    try!(kiss::encode(&mut io::Cursor::new(&ack_packet[..ack_packet_len]), tx_drain, 0));
+                    trace!("Sending ack for {}", packet.prn);
 
-                    let new_packet = !self.recv_prn_table.contains(header.prn);
+                    let new_packet = !self.recv_prn_table.contains(packet.prn);
 
                     //Don't process duplicates
                     if new_packet {
                         trace!("New packet that we haven't seen yet");
-                        self.recv_prn_table.add(header.prn);
+                        self.recv_prn_table.add(packet.prn);
 
                         //If we're the final destination then we should process this packet
-                        if routing::final_addr(&header.address_route) {
-                            //Make sure we haven't seen this packet as a split path route before
-                            let new_content = header.content_prn.map(|prn| {
-                                let result = !self.recv_content_prn_table.contains(prn);
-
-                                //We got a new packet for us, recieve it
-                                if result {
-                                    self.recv_content_prn_table.add(prn);
-                                } else {
-                                    trace!("Packet with duplicate data, skipping");
-                                }
-
-                                result
-                            }).unwrap_or(true);
-                            
-                            if new_content {
-                                trace!("Final dest, surfacing packet as data");
-                                recv_drain(&header, payload);
-                            }
-                        } else {    //Route this packet along
-                            trace!("Packet has routes yet to complete, sending");
-                            let mut routed_header = header;
-                            routed_header.address_route = try!(routing::advance(&header.address_route, self.prn.callsign));
-
-                            //Don't have each link generate a unique PRN for broadcast packets. This causes
-                            //packets to be duplicated many more times than needed. Instead use the existing
-                            //PRN XOR'd with the forward address path so that each link can independently generate
-                            //a identical but different PRN.
-                            routed_header.prn = if routing::is_broadcast(&header.address_route) {
-                                let mut prn = header.prn;
-                                for addr in header.address_route.iter().cloned() {
-                                    //Done with forward address
-                                    if addr == routing::ADDRESS_SEPARATOR {
-                                        break;
-                                    }
-
-                                    prn ^= addr
-                                }
-
-                                trace!("Broadcast packet, generating synchronized PRN {} {}", prn, routing::format_route(&routed_header.address_route));
-                                prn
-                            } else {
-                                self.prn.next()
-                            };
-
-                            //Don't ack broadcast packets
-                            if routing::is_broadcast(&routed_header.address_route) {
-                                try!(self.send_frame(routed_header, payload, tx_drain));
-                            } else {
-                                try!(self.enqueue_frame(routed_header, payload, tx_drain));
-                            }
-                        }
+                        trace!("Final dest, surfacing packet as data");
+                        recv_drain(&packet, payload);
                     } else {
                         trace!("Duplicate packet already recieved before");
                     }
-                } else {
-                    trace!("Data frame but addr {:?} is not our dest {:?}", address::decode(header.address_route[0]), address::decode(self.prn.callsign));
                 }
+            } else {    //Route this packet along
+                trace!("Packet has routes yet to complete, sending");
+                let mut routed_header = *packet;
+                routed_header.address_route = try!(routing::advance(&packet.address_route, self.prn.callsign));
+
+                //@todo: Reject packets that already have this ID in the source path since that means we've seen it before
+
+                //Just pass along, we don't ack unless we are the end host
+                try!(self.send_frame(routed_header, payload, tx_drain));
             }
+        } else {
+            trace!("Data frame but addr {:?} is not our dest {:?}", address::decode(packet.address_route[0]), address::decode(self.prn.callsign));
         }
 
-        //Only share this with our client if we haven't seen if before
+        trace!("obs");
         observe_drain(packet, payload);
 
         Ok(())
@@ -344,15 +303,15 @@ impl Node {
     pub fn tick<T,R,D>(&mut self, tx_drain: &mut T, elapsed_ms: usize, mut retry_drain: R, discard_drain: D) -> Result<(), SendError>
         where
             T: io::Write,
-            R: FnMut(&frame::DataHeader, &[u8]),
-            D: FnMut(&frame::DataHeader, &[u8]),
+            R: FnMut(&frame::Frame, &[u8]),
+            D: FnMut(&frame::Frame, &[u8]),
     {
         try!(self.tx_queue.tick::<_,_,SendError>(elapsed_ms,
             |header, data| {
                 trace!("Packet {} retrying", header.prn);
 
                 //Retry our frame
-                try!(frame::to_bytes(tx_drain, &frame::Frame::Data(*header), Some(data)));
+                try!(frame::to_bytes(tx_drain, header, Some(data)));
 
                 //Notify client that we resent
                 retry_drain(header, data);
@@ -417,14 +376,13 @@ fn test_send_recv() {
     let mut match_ack = false;
     local.recv(&mut util::new_read_write_dispatch(&mut io::Cursor::new(&tx_remote), &mut tx_local),
         |_,_| {},
-        |header,_| {
-            match header {
-                &frame::Frame::Ack(ack) => {
-                    match_ack = true;
-                    assert_eq!(prn, ack.prn);
-                    assert_eq!(ack.src_addr, remote_addr);
-                },
-                _ => assert!(false)
+        |header,payload| {
+            if payload.len() == 0 {
+                match_ack = true;
+                assert_eq!(prn, header.prn);
+                assert_eq!(header.address_route, routing::gen_route(&[local_addr, routing::ADDRESS_SEPARATOR, remote_addr]));
+            } else {
+                assert!(false);
             }
         }).unwrap();
 
@@ -473,13 +431,10 @@ fn test_route() {
                     recv[i] += 1;
                     assert!((0..128).eq(data.iter().cloned()));
                 },
-                |header,data| {
-                    match header {
-                        &frame::Frame::Data(_) => {
-                            obs[i] += 1;
-                            assert!((0..128).eq(data.iter().cloned()));
-                        },
-                        _ => ()
+                |_,data| {
+                    if data.len() > 0 {
+                        obs[i] += 1;
+                        assert!((0..128).eq(data.iter().cloned()));
                     }
                 }).unwrap();
         }
@@ -545,16 +500,15 @@ fn test_broadcast_route() {
         for (i,node) in nodes.iter_mut().enumerate() {
             node.recv(&mut util::new_read_write_dispatch(&mut io::Cursor::new(&rx_frame), &mut tx_frame),
                 |_,data| {
-                    recv[i] += 1;
-                    assert!((0..128).eq(data.iter().cloned()));
+                    if data.len() > 0 {
+                        recv[i] += 1;
+                        assert!((0..128).eq(data.iter().cloned()));
+                    }
                 },
-                |header,data| {
-                    match header {
-                        &frame::Frame::Data(_) => {
-                            obs[i] += 1;
-                            assert!((0..128).eq(data.iter().cloned()));
-                        },
-                        _ => ()
+                |_,data| {
+                    if data.len() > 0 {
+                        obs[i] += 1;
+                        assert!((0..128).eq(data.iter().cloned()));
                     }
                 }).unwrap();
         }
@@ -565,7 +519,7 @@ fn test_broadcast_route() {
     }
 
     for i in 1..CALL_COUNT {
-        assert_eq!(obs[i], 30);
+        assert_eq!(obs[i], 210);
         assert_eq!(nodes[i].tx_queue.pending_packets(), 0);
         assert_eq!(nodes[i].recv_buffer.len(), 0);
     }
@@ -579,12 +533,12 @@ fn test_broadcast_route() {
 
 #[test]
 fn test_split_path() {
-    fn get_split(prn: &mut prn_id::PRN, content_prn: prn_id::PrnValue) -> Vec<u8> {
+    fn get_split(prn: &mut prn_id::PRN) -> Vec<u8> {
         let mut packet = vec!();
-        let callsign = prn.callsign;
-        let mut header = frame::new_data(prn, [callsign, routing::ADDRESS_SEPARATOR, callsign, callsign].iter().cloned()).unwrap();
-        header.content_prn = Some(content_prn);
-        frame::to_bytes(&mut packet, &frame::Frame::Data(header), None).unwrap();
+        let callsign = prn.current;
+        let header = frame::new_header(prn, [callsign, routing::ADDRESS_SEPARATOR, callsign, callsign].into_iter().cloned()).unwrap();
+        let data = (0..32).map(|x| x as u8).collect::<Vec<_>>();
+        frame::to_bytes(&mut packet, &header, Some(&data)).unwrap();
         let mut kiss = vec!();
         kiss::encode(&mut io::Cursor::new(packet), &mut kiss, 0).unwrap();
 
@@ -592,10 +546,9 @@ fn test_split_path() {
     }
 
     let mut prn = prn_id::new(address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap());
-    let content_prn = prn.next();
 
-    let mut left_packet = get_split(&mut prn, content_prn);
-    let right_packet = get_split(&mut prn, content_prn);
+    let mut left_packet = get_split(&mut prn);
+    let right_packet = left_packet.clone();
 
     left_packet.extend_from_slice(&right_packet);
 
@@ -606,17 +559,14 @@ fn test_split_path() {
 
     let mut tx = vec!();
     node.recv(&mut util::new_read_write_dispatch(&mut io::Cursor::new(&left_packet), &mut tx),
-        |header,_| {
-            rx_count += 1;
-            assert_eq!(header.content_prn, Some(content_prn));
+        |_, payload| {
+            if payload.len() > 0 {
+                rx_count += 1;
+            }
         },
-        |header,_| {
-            match header {
-                &frame::Frame::Data(data) => {
-                    obs_count += 1;
-                    assert_eq!(data.content_prn, Some(content_prn));
-                },
-                _ => ()
+        |_, payload| {
+            if payload.len() > 0 {
+                obs_count += 1;
             }
         }).unwrap();
     

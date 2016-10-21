@@ -83,11 +83,45 @@ pub fn format_route(route: &[u32; 17]) -> String {
         })
 }
 
+/// Takes a route and reverse it
+pub fn reverse(route: &[u32; 17]) -> [u32; 17] {
+    let reversed = route.iter().rev()
+        .skip_while(|addr| **addr == ADDRESS_SEPARATOR);
+
+    let mut new_route: [u32; 17] = [0; 17];
+
+    for (idx, addr) in reversed.enumerate() {
+        new_route[idx] = *addr;
+    }
+
+    new_route
+}
+
 #[cfg(test)]
 fn gen_test_addr(mut idx: u8) -> u32 {
     idx += 1;
     let addr = ['T', 'E', 'S', 'T', address::symbol_to_character(idx / 10), address::symbol_to_character(idx % 10), '0'];
     address::encode(addr).unwrap()
+}
+
+#[cfg(test)]
+pub fn gen_route<'a, T>(route: T) -> Route where T: IntoIterator<Item=&'a u32> {
+    let mut final_route: Route = [0; 17];
+
+    for (idx, addr) in route.into_iter().cloned().enumerate() {
+        final_route[idx] = addr;
+    }
+
+    final_route
+}
+
+#[test]
+fn test_reverse() {
+    let route = [1, 2, 3, 0, 5, 6, 7, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let reversed = reverse(&route);
+    let matched = [8, 7, 6, 5, 0, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    
+    assert_eq!(reversed, matched);
 }
 
 #[test]
