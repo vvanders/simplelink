@@ -34,6 +34,17 @@ pub fn final_addr(route: &Route) -> bool {
     route[1] == ADDRESS_SEPARATOR
 }
 
+/// Gets the sending address
+pub fn get_source(route: &Route) -> u32 {
+    for addr in route.iter().cloned().rev() {
+        if addr != ADDRESS_SEPARATOR {
+            return addr
+        }
+    }
+
+    return ADDRESS_SEPARATOR
+}
+
 /// Advances the route with our address(in case we had a broadcast address)
 pub fn advance(route: &Route, this_addr: u32) -> Result<Route, ParseError> {
     let sep_idx = match route.iter().position(|addr| *addr == ADDRESS_SEPARATOR) {
