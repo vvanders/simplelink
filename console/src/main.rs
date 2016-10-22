@@ -201,7 +201,7 @@ fn main_loop<P>(mut port: P, callsign_id: u32) where P: io::Read + io::Write {
     }
 }
 
-fn format_data(header: &frame::DataHeader, payload: &[u8]) -> String {
+fn format_data(header: &frame::Frame, payload: &[u8]) -> String {
     use std::str;
     match str::from_utf8(payload) {
         Ok(msg) => {
@@ -223,14 +223,11 @@ fn read_frames<T>(node: &mut node::Node, io: &mut T, display: &mut display::Disp
             (*cell_display.borrow_mut()).push_message(&format_data(header, payload));
         },
         |header,payload| {
-            match header {
-                &frame::Frame::Data(header) => {
-                    let msg = format_data(&header, payload);
-                    (*cell_display.borrow_mut()).push_message(&format!("OBS - DATA {} {}", header.prn, msg));
-                },
-                &frame::Frame::Ack(header) => {
-                    (*cell_display.borrow_mut()).push_message(&format!("OBS - ACK {} {}", header.prn, address::format_addr(header.src_addr)));
-                }
+            if payload.len() > 0 {
+                let msg = format_data(&header, payload);
+                (*cell_display.borrow_mut()).push_message(&format!("OBS - DATA {} {}", header.prn, msg));
+            } else {
+                (*cell_display.borrow_mut()).push_message(&format!("OBS - ACK {} {}", header.prn, address::format_addr(routing::get_source(&header.address_route))));
             }
         });
 
