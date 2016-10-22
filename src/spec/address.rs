@@ -68,7 +68,7 @@ pub fn character_to_symbol(character: char) -> Option<u8> {
 /// # Examples
 ///
 /// ```
-/// use nbplink::nbp::address;
+/// use simplelink::spec::address;
 ///
 /// match address::encode(['S', '5', '3', 'M', 'V', '0', '0']) {
 ///     Some(value) => assert!(value == 53098624),
@@ -102,7 +102,7 @@ fn encode_rec(address: [char; 7], offset: usize) -> Option<u32> {
 /// # Examples
 ///
 /// ```
-/// use nbplink::nbp::address;
+/// use simplelink::spec::address;
 ///
 /// assert!(address::decode(53098624) == ['S', '5', '3', 'M', 'V', '0', '0']);
 /// ```

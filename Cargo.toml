@@ -1,5 +1,5 @@
 [package]
-name = "nbplink"
+name = "simplelink"
 version = "0.1.0"
 authors = ["Val Vanderschaegen <valere.vanderschaegen@gmail.com>"]
 
@@ -11,5 +11,5 @@ time = "0.1.35"
 rand = "0.3.14"
 
 [lib]
-name = "nbplink"
+name = "simplelink"
 path = "src/lib.rs"

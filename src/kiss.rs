@@ -33,7 +33,7 @@ pub const CMD_RETURN: u8 = 0xFF;
 /// # Examples
 ///
 /// ```
-/// use nbplink::kiss;
+/// use simplelink::kiss;
 ///
 /// let mut data = vec!();
 /// let input: Vec<u8> = ['T', 'E', 'S', 'T'].iter().map(|chr| *chr as u8).collect();
@@ -118,7 +118,7 @@ pub fn encode_part<W>(data: &[u8], encoded: &mut W) -> io::Result<usize> where W
 /// # Examples
 ///
 /// ```
-/// use nbplink::kiss;
+/// use simplelink::kiss;
 /// 
 /// let mut data = vec!();
 /// kiss::encode_cmd(&mut data, kiss::CMD_TX_DELAY, 4, 6);
@@ -160,7 +160,7 @@ pub struct DecodedFrame {
 /// Otherwise returns an `Option` of `DecodedFrame`.
 ///
 /// ```
-/// use nbplink::kiss;
+/// use simplelink::kiss;
 ///
 /// let data = vec!(kiss::FEND, kiss::CMD_DATA, 0x12, kiss::FEND);
 /// let mut decoded = vec!();

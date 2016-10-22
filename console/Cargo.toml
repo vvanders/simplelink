@@ -1,10 +1,10 @@
 [package]
-name = "nbpconsole"
+name = "slconsole"
 version = "0.1.0"
 authors = ["Val Vanderschaegen <valere.vanderschaegen@gmail.com>"]
 
 [dependencies]
-nbplink = { path = "../" }
+simplelink = { path = "../" }
 serial = "0.3"
 log = "0.3.6"
 time = "0.1.35"
@@ -12,5 +12,5 @@ clap = "2.9.0"
 pdcurses-sys = "0.3.0"
 
 [[bin]]
-name = "nbpconsole"
+name = "slconsole"
 path = "src/main.rs"

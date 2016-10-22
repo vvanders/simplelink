@@ -7,5 +7,5 @@ extern crate time;
 extern crate rand;
 
 pub mod kiss;
-pub mod nbp;
+pub mod spec;
 pub mod util;

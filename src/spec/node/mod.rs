@@ -4,10 +4,10 @@ pub mod tx_queue;
 
 use std::io;
 use std::mem;
-use nbp::prn_id;
-use nbp::frame;
-use nbp::routing;
-use nbp::address;
+use spec::prn_id;
+use spec::frame;
+use spec::routing;
+use spec::address;
 use kiss;
 
 pub struct Node {

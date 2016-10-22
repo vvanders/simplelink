@@ -1,5 +1,5 @@
 ///! Table for tracking recieved PRNs
-use nbp::prn_id;
+use spec::prn_id;
 
 const TABLE_SIZE: usize = 1000;
 
@@ -37,7 +37,7 @@ impl Table {
 }
 
 #[cfg(test)]
-use nbp::address;
+use spec::address;
 
 #[test]
 fn test_contains() {

@@ -1,9 +1,9 @@
 //! NBP Frame management
 use std::io;
 use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian};
-use nbp::crc16;
-use nbp::prn_id;
-use nbp::routing;
+use spec::crc16;
+use spec::prn_id;
+use spec::routing;
 
 /// MTU of payload
 pub const MTU: usize = 1500;
@@ -255,7 +255,7 @@ pub fn to_bytes<T>(bytes: &mut T, frame: &Frame, payload: Option<&[u8]>) -> Resu
 }
 
 #[cfg(test)]
-use nbp::address;
+use spec::address;
 
 #[test]
 fn serialize_ack_test() {
@@ -323,7 +323,7 @@ fn serialize_deserialize_packet(dest: &[u32], payload: &[u8]) {
 
 #[test]
 fn serialize_data_test() {
-    use nbp::address;
+    use spec::address;
 
     let dest_addr = address::encode(['K', 'F', '7', 'S', 'J', 'K', '0']).unwrap();
     let src_addr = address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap();
@@ -339,7 +339,7 @@ fn serialize_data_test() {
 
 #[test]
 fn test_addr_permuatations() {
-    use nbp::address;
+    use spec::address;
 
     for size in 1..15 {
         //Build address
@@ -381,7 +381,7 @@ fn test_addr_permuatations() {
 
 #[test]
 fn test_payload_permutations() {
-    use nbp::address;
+    use spec::address;
 
     for size in 0..MTU+1 {
         let dest_addr = address::encode(['K', 'F', '7', 'S', 'J', 'K', '0']).unwrap();
@@ -402,7 +402,7 @@ fn test_payload_permutations() {
 
 #[test]
 fn test_corrupt_bit() {
-    use nbp::address;
+    use spec::address;
     use std::io::Cursor;
 
     let dest_addr = address::encode(['K', 'F', '7', 'S', 'J', 'K', '0']).unwrap();

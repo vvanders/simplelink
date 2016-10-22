@@ -5,7 +5,7 @@ extern crate time;
 #[macro_use]
 extern crate log;
 
-extern crate nbplink;
+extern crate simplelink;
 
 mod echo;
 mod display;
@@ -14,15 +14,15 @@ use std::time::Duration;
 use std::io;
 use std::thread;
 
-use nbplink::nbp::{address, frame, routing, node};
-use nbplink::util;
+use simplelink::spec::{address, frame, routing, node};
+use simplelink::util;
 
 fn main() {
     //Parse command line arguments
-    let matches = clap::App::new("NBPLink Command line interface")
+    let matches = clap::App::new("simplelink Command line interface")
         .version("0.1.0")
         .author("Val Vanderschaegen <valere.vanderschaegen@gmail.com>")
-        .about("Command line interface for sending and recieving packets with the NBP protocol")
+        .about("Command line interface for sending and recieving packets with the simplelink protocol")
         .arg(clap::Arg::with_name("port")
             .required(true)
             .help("rs232 port of the TNC, ex: 'COM1', '/dev/ttyUSB0' or TCP/IP port, ex :'localhost:8001'"))
@@ -70,7 +70,7 @@ fn main() {
             _ => log::LogLevelFilter::Error
         };
 
-        nbplink::util::init_log(filter);
+        util::init_log(filter);
     }
 
     let port = matches.value_of_os("port");

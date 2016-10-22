@@ -44,11 +44,11 @@ impl PRN {
 }
 
 #[cfg(test)]
-use nbp::address;
+use spec::address;
 
 #[test]
 fn test_unique() {
-    use nbp::prn_id;
+    use spec::prn_id;
 
     const SAMPLE_SIZE: usize = 2048;
 
@@ -67,7 +67,7 @@ fn test_unique() {
 
 #[test]
 fn test_unique_seq() {
-    use nbp::prn_id;
+    use spec::prn_id;
 
     let mut prn_first = prn_id::new(address::encode(['K', 'I' ,'7', 'E', 'S', 'T', '0']).unwrap());
     let mut prn_second = prn_id::new(address::encode(['K', 'F' ,'7', 'S', 'J', 'K', '0']).unwrap());
@@ -79,7 +79,7 @@ fn test_unique_seq() {
 
 #[test]
 fn test_seed() {
-    use nbp::prn_id;
+    use spec::prn_id;
 
     let mut prn = prn_id::new(address::encode(['K', 'I' ,'7', 'E', 'S', 'T', '0']).unwrap());
 

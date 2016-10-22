@@ -8,7 +8,7 @@ pub type CRC = u16;
 ///
 /// # Examples
 /// ```
-/// use nbplink::nbp::crc16;
+/// use simplelink::spec::crc16;
 /// //Generate some data
 /// let mut data: Vec<u8> = (0..32)
 ///     .flat_map(|i| {
@@ -99,11 +99,11 @@ pub fn finish(mut crc: CRC) -> CRC {
 }
 
 #[cfg(test)]
-use nbp::address;
+use spec::address;
 
 #[test]
 fn crc_test() {
-    use nbp::prn_id;
+    use spec::prn_id;
 
     let mut prn = prn_id::new(address::encode(['K', 'I', '7', 'E', 'S', 'T', '0']).unwrap());
 

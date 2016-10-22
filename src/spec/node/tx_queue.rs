@@ -1,7 +1,7 @@
 ///! Transmitting queue for outgoing frames
 use std::fmt;
 use rand;
-use nbp::frame;
+use spec::frame;
 
 /// Maximum number of packets in flight
 pub const MAX_PACKET: usize = 256;
@@ -189,11 +189,11 @@ impl Queue {
 #[cfg(test)]
 use std::io;
 #[cfg(test)]
-use nbp::prn_id;
+use spec::prn_id;
 #[cfg(test)]
-use nbp::routing;
+use spec::routing;
 #[cfg(test)]
-use nbp::address;
+use spec::address;
 
 #[cfg(test)]
 fn create_sample_packet(prn: &mut prn_id::PRN, size: u32) -> (frame::Frame, Vec<u8>) {
