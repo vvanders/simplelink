@@ -22,7 +22,7 @@ pub fn new(callsign: u32) -> PRN {
 impl PRN {
     /// Generates a new packet id value from the previous packet id.
     pub fn next(&mut self) -> PrnValue {
-        //NBP uses a 4-tap poly in the form of 1 + x^25 + x^26 + x^30 + x^32
+        //use a 4-tap poly in the form of 1 + x^25 + x^26 + x^30 + x^32
         let bit = ((self.current >> (32-25)) ^ (self.current >> (32-26)) ^ (self.current >> (32-30)) ^ (self.current >> (32-32))) & 0x1;
 
         //Shift every bit down, insert newly generated bit at the top

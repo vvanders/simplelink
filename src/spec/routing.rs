@@ -10,7 +10,7 @@ pub const BROADCAST_ADDRESS: u32 = 0xFFFFFFFF;
 /// Maximum amount of addresses in a route
 pub const MAX_LENGTH: usize = 17;
 
-///Route of a NBP packet, allows for 16 callsigns + separator to denote where the packet is in its routing
+///Route of a packet, allows for 16 callsigns + separator to denote where the packet is in its routing
 pub type Route = [u32; MAX_LENGTH];
 
 #[derive(Debug)]

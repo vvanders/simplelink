@@ -1,4 +1,4 @@
-//! Encodes address to/from NBP wire format
+//! Encodes address to/from wire format
 
 const SYMBOL_TABLE: [char; 36] = [
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
@@ -62,7 +62,7 @@ pub fn character_to_symbol(character: char) -> Option<u8> {
 }
 
 /// Encodes a human readable address into a 32 bit wire format.
-/// NBP uses a modulo-36 encoding supporting up to 7 characters.
+/// This is a modulo-36 encoding supporting up to 7 characters.
 /// Only the values [0-9], [A-Z] are supported.
 ///
 /// # Examples

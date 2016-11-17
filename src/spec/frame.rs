@@ -1,4 +1,4 @@
-//! NBP Frame management
+//! Frame management
 use std::io;
 use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian};
 use spec::crc16;
@@ -14,7 +14,7 @@ pub const MAX_ACK_SIZE: usize = 4 + 4 * (routing::MAX_LENGTH + 1) + 2;
 /// Max size for a packet (Data + PRN + Addr + CRC)
 pub const MAX_PACKET_SIZE: usize = MAX_ACK_SIZE + MTU;
 
-/// Represents a single NBP Frame. NBP has two types of frames, data and ack frames.
+/// Represents a single Frame. We have two types of frames, data and ack frames.
 /// And header with zero size is an ACK frame.
 #[derive(Copy,Clone,Eq,PartialEq,Debug)]
 pub struct Frame {

@@ -1,0 +1,14 @@
+[package]
+name = "slink_capi"
+version = "0.1.0"
+authors = ["Val Vanderschaegen <valere.vanderschaegen@gmail.com>"]
+
+[dependencies]
+libc = "0.2.17"
+serial = "0.3"
+log = "0.3.6"
+simplelink = { path = "../" }
+
+[lib]
+name = "slink_capi"
+crate-type = ["dylib"]

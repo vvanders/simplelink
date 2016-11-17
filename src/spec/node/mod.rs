@@ -1,4 +1,3 @@
-///! NBP node module
 pub mod prn_table;
 pub mod tx_queue;
 
@@ -102,9 +101,9 @@ impl From<SendError> for RecvError {
     }
 }
 
-/// Constructs a new NBP node that can be used to communicate with other NBP nodes
+/// Constructs a new SimpleLink node that can be used to communicate with other SimpleLink nodes
 pub fn new(callsign: u32) -> Node {
-    trace!("New NBP link created with callsign {:?}", address::decode(callsign));
+    trace!("New link created with callsign {:?}", address::decode(callsign));
 
     Node {
         prn: prn_id::new(callsign),
@@ -258,6 +257,7 @@ impl Node {
                 if payload.len() == 0 {
                     trace!("Recieved ack {}", packet.prn);
                     self.tx_queue.ack_recv(packet.prn);
+                    recv_drain(&packet, payload);
                 } else {
                     let ack = frame::new_ack(packet.prn, routing::reverse(&packet.address_route));
                     let mut ack_packet: [u8; frame::MAX_ACK_SIZE] = unsafe { mem::uninitialized() };
