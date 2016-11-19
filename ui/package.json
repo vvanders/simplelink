@@ -1,21 +1,14 @@
 {
-  "name": "electron-quick-start",
+  "name": "simplelink",
   "version": "1.0.0",
-  "description": "A minimal Electron application",
+  "description": "A KISS TCN based communcation client",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "prestart": "elm make elm/Main.elm --output=client.js"
   },
-  "repository": "https://github.com/electron/electron-quick-start",
-  "keywords": [
-    "Electron",
-    "quick",
-    "start",
-    "tutorial",
-    "demo"
-  ],
-  "author": "GitHub",
-  "license": "CC0-1.0",
+  "repository": "https://github.com/vvanders/SimpleLink",
+  "author": "Val Vanderschaegen <valere.vanderschaegen@gmail.com>",
   "devDependencies": {
     "electron": "^1.4.1",
     "electron-rebuild": "^1.3.0"
