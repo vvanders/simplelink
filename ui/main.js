@@ -58,12 +58,14 @@ var recv_callback = ffi.Callback('void', ['uint32*', 'uint32', 'char*', 'uint'],
 
     let translatedRoute = route_to_arr(route)
 
-    console.log("Recv ")
-    console.log({
-      'data': data.toString(),
+    let msg = {
+      'msg': data.toString(),
       'prn': prn,
       'route': translatedRoute
-    })
+    }
+    console.log("Recv ")
+    console.log(msg)
+    mainWindow.send('recv', msg)
   })
 rust.set_recv_callback(link, recv_callback)
 
@@ -72,11 +74,13 @@ var ack_callback = ffi.Callback('void', ['pointer', 'uint32'],
     let route = ref.reinterpret(routePtr, 17 * 4)
     let translatedRoute = route_to_arr(route)
 
-    console.log("Ack");
-    console.log({
+    let msg = {
       'prn': prn,
       'route': translatedRoute
-    })
+    }
+    console.log("Ack");
+    console.log(msg)
+    mainWindow.send('ack', msg)
   })
 rust.set_ack_callback(link, ack_callback)
 
@@ -85,38 +89,30 @@ var obs_callback = ffi.Callback('void', ['pointer', 'uint32', 'pointer', 'uint']
     let data = ref.reinterpret(dataPtr, size)
     let route = ref.reinterpret(routePtr, 17 * 4)
 
-    var translatedRoute = route_to_arr(route)
+    let translatedRoute = route_to_arr(route)
 
-    console.log("Obs ")
-    console.log({
-      'data': data.toString(),
+    let msg = {
+      'msg': data.toString(),
       'prn': prn,
       'route': translatedRoute
-    })
+    }
+    console.log("Obs ")
+    console.log(msg)
+    mainWindow.send('observe', msg)
   })
 rust.set_observe_callback(link, obs_callback)
 
 var expire_callback = ffi.Callback('void', ['uint32'],
   function(prn) {
+    mainWindow.send('expire', prn)
   })
 rust.set_expire_callback(link, expire_callback)
 
 var retry_callback = ffi.Callback('void', ['uint32'],
   function(prn) {
+    mainWindow.send('retry', prn)
   })
 rust.set_retry_callback(link, retry_callback)
-
-rust.open_loopback(link)
-
-{
-  let msg = Buffer.from("Foo")
-  let route = Buffer.alloc(4 * 15)
-  route.writeUInt32LE(addr)
-
-  rust.send(link, route, msg, msg.length)
-}
-
-rust.tick(link, 0)
 
 function createWindow () {
   // Create the browser window.
@@ -129,6 +125,19 @@ function createWindow () {
     slashes: true
   }))
 
+  mainWindow.webContents.once('did-finish-load', () => {
+    rust.open_loopback(link)
+
+    {
+      let msg = Buffer.from("Foo")
+      let route = Buffer.alloc(4 * 15)
+      route.writeUInt32LE(addr)
+
+      rust.send(link, route, msg, msg.length)
+    }
+
+    rust.tick(link, 0)
+  })
   // Open the DevTools.
   //mainWindow.webContents.openDevTools()
 

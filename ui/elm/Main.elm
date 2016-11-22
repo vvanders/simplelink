@@ -24,7 +24,7 @@ type Msg = Increment
   | Decrement
   | Retry Int
   | Expire Int
-  | Ack Int
+  | Ack AckMsg
   | Recv RecvMsg
   | Observe RecvMsg
 
@@ -65,9 +65,14 @@ type alias RecvMsg = {
   msg : String
 }
 
+type alias AckMsg = {
+  route : List String,
+  prn: Int
+}
+
 port simplelink_recv_msg : (RecvMsg -> msg) -> Sub msg
 port simplelink_obs_msg : (RecvMsg -> msg) -> Sub msg
-port simplelink_ack : (Int -> msg) -> Sub msg
+port simplelink_ack : (AckMsg -> msg) -> Sub msg
 port simplelink_retry : (Int -> msg) -> Sub msg
 port simplelink_expire : (Int -> msg) -> Sub msg
 

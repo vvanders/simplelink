@@ -11,11 +11,28 @@
     <script>
       var node = document.getElementById('main');
       var app = Elm.Main.embed(node);
+
+      const {ipcRenderer} = require('electron')
+      ipcRenderer.on('recv', (event, arg) => {
+        console.log(arg)
+        app.ports.simplelink_recv_msg.send(arg)
+      })
+      ipcRenderer.on('observe', (event, arg) => {
+        app.ports.simplelink_obs_msg.send(arg)
+      })
+      ipcRenderer.on('ack', (event, arg) => {
+        app.ports.simplelink_ack.send(arg)
+      })
+      ipcRenderer.on('retry', (event, arg) => {
+        app.ports.simplelink_retry.send(arg)
+      })
+      ipcRenderer.on('expire', (event, arg) => {
+        app.ports.simplelink_expire.send(arg)
+      })
+
+      app.ports.simplelink_send.subscribe(function(msg) {
+        ipcRenderer.send('send', msg)
+      })
     </script>
   </body>
-
-  <script>
-    // You can also require other files to run in this process
-    require('./renderer.js')
-  </script>
 </html>
