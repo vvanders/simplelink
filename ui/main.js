@@ -47,72 +47,95 @@ function route_to_arr(route) {
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
 let mainWindow
+let link
 
-let addr = rust.str_to_addr("KI7EST")
-let link = rust.new(addr)
+//Pin the callback so we don't GC it
+let recv_callback
+let ack_callback
+let obs_callback
+let expire_callback
+let retry_callback
 
-var recv_callback = ffi.Callback('void', ['uint32*', 'uint32', 'char*', 'uint'],
-  function(routePtr, prn, dataPtr, size) {
-    let data = ref.reinterpret(dataPtr, size)
-    let route = ref.reinterpret(routePtr, 17 * 4)
+electron.ipcMain.on('send', (event, msg) => {
+  console.log("send")
+  console.log(msg)
+})
 
-    let translatedRoute = route_to_arr(route)
+electron.ipcMain.on('init', (event, msg) => {
+  console.log("init")
 
-    let msg = {
-      'msg': data.toString(),
-      'prn': prn,
-      'route': translatedRoute
-    }
-    console.log("Recv ")
-    console.log(msg)
-    mainWindow.send('recv', msg)
-  })
-rust.set_recv_callback(link, recv_callback)
+  let addr = rust.str_to_addr(msg.callsign)
+  link = rust.new(addr)
 
-var ack_callback = ffi.Callback('void', ['pointer', 'uint32'],
-  function(routePtr, prn) {
-    let route = ref.reinterpret(routePtr, 17 * 4)
-    let translatedRoute = route_to_arr(route)
+  var recv_callback = ffi.Callback('void', ['uint32*', 'uint32', 'char*', 'uint'],
+    function(routePtr, prn, dataPtr, size) {
+      let data = ref.reinterpret(dataPtr, size)
+      let route = ref.reinterpret(routePtr, 17 * 4)
 
-    let msg = {
-      'prn': prn,
-      'route': translatedRoute
-    }
-    console.log("Ack");
-    console.log(msg)
-    mainWindow.send('ack', msg)
-  })
-rust.set_ack_callback(link, ack_callback)
+      let translatedRoute = route_to_arr(route)
 
-var obs_callback = ffi.Callback('void', ['pointer', 'uint32', 'pointer', 'uint'],
-  function(routePtr, prn, dataPtr, size) {
-    let data = ref.reinterpret(dataPtr, size)
-    let route = ref.reinterpret(routePtr, 17 * 4)
+      let msg = {
+        'msg': data.toString(),
+        'prn': prn,
+        'route': translatedRoute
+      }
+      console.log("Recv ")
+      console.log(msg)
+      mainWindow.send('recv', msg)
+    })
+  rust.set_recv_callback(link, recv_callback)
 
-    let translatedRoute = route_to_arr(route)
+  var ack_callback = ffi.Callback('void', ['pointer', 'uint32'],
+    function(routePtr, prn) {
+      let route = ref.reinterpret(routePtr, 17 * 4)
+      let translatedRoute = route_to_arr(route)
 
-    let msg = {
-      'msg': data.toString(),
-      'prn': prn,
-      'route': translatedRoute
-    }
-    console.log("Obs ")
-    console.log(msg)
-    mainWindow.send('observe', msg)
-  })
-rust.set_observe_callback(link, obs_callback)
+      let msg = {
+        'prn': prn,
+        'route': translatedRoute
+      }
+      console.log("Ack");
+      console.log(msg)
+      mainWindow.send('ack', msg)
+    })
+  rust.set_ack_callback(link, ack_callback)
 
-var expire_callback = ffi.Callback('void', ['uint32'],
-  function(prn) {
-    mainWindow.send('expire', prn)
-  })
-rust.set_expire_callback(link, expire_callback)
+  var obs_callback = ffi.Callback('void', ['pointer', 'uint32', 'pointer', 'uint'],
+    function(routePtr, prn, dataPtr, size) {
+      let data = ref.reinterpret(dataPtr, size)
+      let route = ref.reinterpret(routePtr, 17 * 4)
 
-var retry_callback = ffi.Callback('void', ['uint32'],
-  function(prn) {
-    mainWindow.send('retry', prn)
-  })
-rust.set_retry_callback(link, retry_callback)
+      let translatedRoute = route_to_arr(route)
+
+      let msg = {
+        'msg': data.toString(),
+        'prn': prn,
+        'route': translatedRoute
+      }
+      console.log("Obs ")
+      console.log(msg)
+      mainWindow.send('observe', msg)
+    })
+  rust.set_observe_callback(link, obs_callback)
+
+  var expire_callback = ffi.Callback('void', ['uint32'],
+    function(prn) {
+      mainWindow.send('expire', prn)
+    })
+  rust.set_expire_callback(link, expire_callback)
+
+  var retry_callback = ffi.Callback('void', ['uint32'],
+    function(prn) {
+      mainWindow.send('retry', prn)
+    })
+  rust.set_retry_callback(link, retry_callback)
+
+  if(msg.target == "loopback") {
+    rust.open_loopback(link)
+  } else {
+    rust.open_port(link, msg.target, 0)
+  }
+})
 
 function createWindow () {
   // Create the browser window.
@@ -126,6 +149,7 @@ function createWindow () {
   }))
 
   mainWindow.webContents.once('did-finish-load', () => {
+    /*
     rust.open_loopback(link)
 
     {
@@ -137,6 +161,7 @@ function createWindow () {
     }
 
     rust.tick(link, 0)
+    */
   })
   // Open the DevTools.
   //mainWindow.webContents.openDevTools()
@@ -160,13 +185,6 @@ app.on('window-all-closed', function () {
   // On OS X it is common for applications and their menu bar
   // to stay active until the user quits explicitly with Cmd + Q
   if (process.platform !== 'darwin') {
-    //Pin the callback so we don't GC it
-    recv_callback
-    ack_callback
-    obs_callback
-    expire_callback
-    retry_callback
-
     app.quit()
   }
 

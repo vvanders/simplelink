@@ -1,7 +1,10 @@
 port module Main exposing (..)
 
+import InitPage
+import MainPage
+import SimpleLink exposing (..)
+
 import Html exposing (Html, button, div, text)
-import Html.Events exposing (onClick)
 
 main : Program Never Model Msg
 main =
@@ -13,76 +16,70 @@ main =
   }
 
 -- MODEL
-type alias Model = Int
+type Model = Init(InitPage.Model)
+ | Main(MainPage.Model)
 
 model : (Model, Cmd Msg)
 model =
-  (0, Cmd.none) 
+  (Init(InitPage.model), Cmd.none) 
 
 -- UPDATE
-type Msg = Increment
-  | Decrement
-  | Retry Int
-  | Expire Int
-  | Ack AckMsg
-  | Recv RecvMsg
-  | Observe RecvMsg
+type Msg = InitAction(InitPage.Msg) 
+  | MainAction(MainPage.Msg)
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
   case msg of
-    Increment ->
-      (model + 1, Cmd.none)
-
-    Decrement ->
-      (model - 1, Cmd.none)
-
-    _ ->
-      (model, Cmd.none)
+    InitAction(InitPage.SetLoopback) -> (Main(MainPage.init), simplelink_init { callsign = "KI7EST", target = "loopback"})
+    InitAction(InitPage.SetCom source) -> (Main(MainPage.init), simplelink_init { callsign = "KI7EST", target = source })
+    InitAction(action) ->
+      case model of
+        Init(initModel) -> (Init(InitPage.update initModel action), Cmd.none)
+        _ -> (model, Cmd.none)
+    MainAction(action) ->
+      case model of
+        Main(mainModel) ->
+          let
+            (modelRes, cmdRes) = MainPage.update action mainModel
+          in
+            (Main(modelRes), Cmd.map (\cmd -> MainAction cmd) cmdRes)
+        _ -> (model, Cmd.none)
 
 -- VIEW
 view : Model -> Html Msg
 view model =
-  div []
-    [ button [ onClick Decrement ] [ text "-" ]
-    , div [] [ text (toString model) ]
-    , button [ onClick Increment ] [ text "+" ]
-    ]
+  let
+    inner = case model of
+      Init(initModel) -> InitPage.view initModel (\msg -> InitAction(msg))
+      Main(mainModel) -> MainPage.view mainModel (\msg -> MainAction(msg))
+  in
+    div []
+     [ inner ]
 
 -- OUTGOING
-port simplelink_init : String -> Cmd msg
+type alias InitMsg = { target : String, callsign : String }
 
-type alias SendMsg = {
-  route : List String,
-  msg : String
-}
+port simplelink_init : InitMsg -> Cmd msg
 port simplelink_send : SendMsg -> Cmd msg
 
 -- INCOMING
-type alias RecvMsg = {
-  route : List String,
-  prn : Int,
-  msg : String
-}
-
-type alias AckMsg = {
-  route : List String,
-  prn: Int
-}
-
 port simplelink_recv_msg : (RecvMsg -> msg) -> Sub msg
 port simplelink_obs_msg : (RecvMsg -> msg) -> Sub msg
 port simplelink_ack : (AckMsg -> msg) -> Sub msg
-port simplelink_retry : (Int -> msg) -> Sub msg
-port simplelink_expire : (Int -> msg) -> Sub msg
+port simplelink_retry : (PRN -> msg) -> Sub msg
+port simplelink_expire : (PRN -> msg) -> Sub msg
 
 -- SUBSCRIPTIONS
+dispatch_link : (a -> SimpleLink.Msg) -> (a -> Msg)
+dispatch_link msg =
+  (\data -> MainAction(MainPage.Link(msg data)))
+
 subscriptions : Model -> Sub Msg
 subscriptions model =
   Sub.batch [
-    simplelink_retry Retry,
-    simplelink_expire Expire,
-    simplelink_ack Ack,
-    simplelink_recv_msg Recv,
-    simplelink_obs_msg Observe
+    simplelink_retry (dispatch_link SimpleLink.Retry),
+    simplelink_expire (dispatch_link SimpleLink.Expire),
+    simplelink_ack (dispatch_link SimpleLink.Ack),
+    simplelink_recv_msg (dispatch_link SimpleLink.Recv),
+    simplelink_obs_msg (dispatch_link SimpleLink.Observe)
   ]

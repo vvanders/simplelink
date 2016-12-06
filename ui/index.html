@@ -33,6 +33,9 @@
       app.ports.simplelink_send.subscribe(function(msg) {
         ipcRenderer.send('send', msg)
       })
+      app.ports.simplelink_init.subscribe(function(msg) {
+        ipcRenderer.send('init', msg)
+      })
     </script>
   </body>
 </html>

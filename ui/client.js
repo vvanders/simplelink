@@ -7906,23 +7906,220 @@ var _elm_lang$html$Html_Events$Options = F2(
 		return {stopPropagation: a, preventDefault: b};
 	});
 
-var _user$project$Main$update = F2(
+var _user$project$InitPage$update = F2(
+	function (model, msg) {
+		var _p0 = msg;
+		if (_p0.ctor === 'SetComSource') {
+			return _p0._0;
+		} else {
+			return model;
+		}
+	});
+var _user$project$InitPage$model = '';
+var _user$project$InitPage$SetComSource = function (a) {
+	return {ctor: 'SetComSource', _0: a};
+};
+var _user$project$InitPage$SetCom = function (a) {
+	return {ctor: 'SetCom', _0: a};
+};
+var _user$project$InitPage$SetLoopback = {ctor: 'SetLoopback'};
+var _user$project$InitPage$view = F2(
+	function (model, conv) {
+		return A2(
+			_elm_lang$html$Html$div,
+			{ctor: '[]'},
+			{
+				ctor: '::',
+				_0: A2(
+					_elm_lang$html$Html$button,
+					{
+						ctor: '::',
+						_0: _elm_lang$html$Html_Events$onClick(
+							conv(_user$project$InitPage$SetLoopback)),
+						_1: {ctor: '[]'}
+					},
+					{
+						ctor: '::',
+						_0: _elm_lang$html$Html$text('Loopback'),
+						_1: {ctor: '[]'}
+					}),
+				_1: {
+					ctor: '::',
+					_0: A2(
+						_elm_lang$html$Html$button,
+						{
+							ctor: '::',
+							_0: _elm_lang$html$Html_Events$onClick(
+								conv(
+									_user$project$InitPage$SetCom(model))),
+							_1: {ctor: '[]'}
+						},
+						{
+							ctor: '::',
+							_0: _elm_lang$html$Html$text('Com'),
+							_1: {ctor: '[]'}
+						}),
+					_1: {
+						ctor: '::',
+						_0: A2(
+							_elm_lang$html$Html$input,
+							{
+								ctor: '::',
+								_0: _elm_lang$html$Html_Events$onInput(
+									function (str) {
+										return conv(
+											_user$project$InitPage$SetComSource(str));
+									}),
+								_1: {ctor: '[]'}
+							},
+							{ctor: '[]'}),
+						_1: {ctor: '[]'}
+					}
+				}
+			});
+	});
+
+var _user$project$SimpleLink$SendMsg = F2(
+	function (a, b) {
+		return {route: a, msg: b};
+	});
+var _user$project$SimpleLink$RecvMsg = F3(
+	function (a, b, c) {
+		return {route: a, prn: b, msg: c};
+	});
+var _user$project$SimpleLink$AckMsg = F2(
+	function (a, b) {
+		return {route: a, prn: b};
+	});
+var _user$project$SimpleLink$Observe = function (a) {
+	return {ctor: 'Observe', _0: a};
+};
+var _user$project$SimpleLink$Recv = function (a) {
+	return {ctor: 'Recv', _0: a};
+};
+var _user$project$SimpleLink$Ack = function (a) {
+	return {ctor: 'Ack', _0: a};
+};
+var _user$project$SimpleLink$Expire = function (a) {
+	return {ctor: 'Expire', _0: a};
+};
+var _user$project$SimpleLink$Retry = function (a) {
+	return {ctor: 'Retry', _0: a};
+};
+
+var _user$project$MainPage$update = F2(
 	function (msg, model) {
 		var _p0 = msg;
 		switch (_p0.ctor) {
-			case 'Increment':
-				return {ctor: '_Tuple2', _0: model + 1, _1: _elm_lang$core$Platform_Cmd$none};
-			case 'Decrement':
-				return {ctor: '_Tuple2', _0: model - 1, _1: _elm_lang$core$Platform_Cmd$none};
+			case 'Link':
+				var _p1 = _p0._0;
+				switch (_p1.ctor) {
+					case 'Recv':
+						var _p2 = _p1._0;
+						var message = {route: _p2.route, prn: _p2.prn, content: _p2.msg, timestamp: 0};
+						return {
+							ctor: '_Tuple2',
+							_0: _elm_lang$core$Native_Utils.update(
+								model,
+								{
+									messages: A2(
+										_elm_lang$core$Basics_ops['++'],
+										model.messages,
+										{
+											ctor: '::',
+											_0: message,
+											_1: {ctor: '[]'}
+										})
+								}),
+							_1: _elm_lang$core$Platform_Cmd$none
+						};
+					case 'Observe':
+						return {ctor: '_Tuple2', _0: model, _1: _elm_lang$core$Platform_Cmd$none};
+					case 'Ack':
+						return {ctor: '_Tuple2', _0: model, _1: _elm_lang$core$Platform_Cmd$none};
+					case 'Retry':
+						return {ctor: '_Tuple2', _0: model, _1: _elm_lang$core$Platform_Cmd$none};
+					default:
+						return {ctor: '_Tuple2', _0: model, _1: _elm_lang$core$Platform_Cmd$none};
+				}
+			case 'UpdateMessage':
+				return {
+					ctor: '_Tuple2',
+					_0: _elm_lang$core$Native_Utils.update(
+						model,
+						{outgoing_msg: _p0._0}),
+					_1: _elm_lang$core$Platform_Cmd$none
+				};
 			default:
 				return {ctor: '_Tuple2', _0: model, _1: _elm_lang$core$Platform_Cmd$none};
 		}
 	});
-var _user$project$Main$model = {ctor: '_Tuple2', _0: 0, _1: _elm_lang$core$Platform_Cmd$none};
+var _user$project$MainPage$init = {
+	messages: {ctor: '[]'},
+	outgoing_msg: '',
+	outgoing_route: {ctor: '[]'}
+};
+var _user$project$MainPage$Model = F3(
+	function (a, b, c) {
+		return {messages: a, outgoing_msg: b, outgoing_route: c};
+	});
+var _user$project$MainPage$Message = F4(
+	function (a, b, c, d) {
+		return {route: a, prn: b, content: c, timestamp: d};
+	});
+var _user$project$MainPage$UpdateMessage = function (a) {
+	return {ctor: 'UpdateMessage', _0: a};
+};
+var _user$project$MainPage$Send = function (a) {
+	return {ctor: 'Send', _0: a};
+};
+var _user$project$MainPage$view = F2(
+	function (model, conv) {
+		return A2(
+			_elm_lang$html$Html$div,
+			{ctor: '[]'},
+			{
+				ctor: '::',
+				_0: A2(
+					_elm_lang$html$Html$input,
+					{
+						ctor: '::',
+						_0: _elm_lang$html$Html_Events$onInput(
+							function (str) {
+								return conv(
+									_user$project$MainPage$UpdateMessage(str));
+							}),
+						_1: {ctor: '[]'}
+					},
+					{ctor: '[]'}),
+				_1: {
+					ctor: '::',
+					_0: A2(
+						_elm_lang$html$Html$button,
+						{
+							ctor: '::',
+							_0: _elm_lang$html$Html_Events$onClick(
+								conv(
+									_user$project$MainPage$Send(model.outgoing_msg))),
+							_1: {ctor: '[]'}
+						},
+						{
+							ctor: '::',
+							_0: _elm_lang$html$Html$text('Send'),
+							_1: {ctor: '[]'}
+						}),
+					_1: {ctor: '[]'}
+				}
+			});
+	});
+var _user$project$MainPage$Link = function (a) {
+	return {ctor: 'Link', _0: a};
+};
+
 var _user$project$Main$simplelink_init = _elm_lang$core$Native_Platform.outgoingPort(
 	'simplelink_init',
 	function (v) {
-		return v;
+		return {target: v.target, callsign: v.callsign};
 	});
 var _user$project$Main$simplelink_send = _elm_lang$core$Native_Platform.outgoingPort(
 	'simplelink_send',
@@ -7998,50 +8195,105 @@ var _user$project$Main$simplelink_ack = _elm_lang$core$Native_Platform.incomingP
 			_elm_lang$core$Json_Decode$list(_elm_lang$core$Json_Decode$string))));
 var _user$project$Main$simplelink_retry = _elm_lang$core$Native_Platform.incomingPort('simplelink_retry', _elm_lang$core$Json_Decode$int);
 var _user$project$Main$simplelink_expire = _elm_lang$core$Native_Platform.incomingPort('simplelink_expire', _elm_lang$core$Json_Decode$int);
-var _user$project$Main$SendMsg = F2(
+var _user$project$Main$InitMsg = F2(
 	function (a, b) {
-		return {route: a, msg: b};
+		return {target: a, callsign: b};
 	});
-var _user$project$Main$RecvMsg = F3(
-	function (a, b, c) {
-		return {route: a, prn: b, msg: c};
+var _user$project$Main$Main = function (a) {
+	return {ctor: 'Main', _0: a};
+};
+var _user$project$Main$Init = function (a) {
+	return {ctor: 'Init', _0: a};
+};
+var _user$project$Main$model = {
+	ctor: '_Tuple2',
+	_0: _user$project$Main$Init(_user$project$InitPage$model),
+	_1: _elm_lang$core$Platform_Cmd$none
+};
+var _user$project$Main$MainAction = function (a) {
+	return {ctor: 'MainAction', _0: a};
+};
+var _user$project$Main$update = F2(
+	function (msg, model) {
+		var _p0 = msg;
+		if (_p0.ctor === 'InitAction') {
+			switch (_p0._0.ctor) {
+				case 'SetLoopback':
+					return {
+						ctor: '_Tuple2',
+						_0: _user$project$Main$Main(_user$project$MainPage$init),
+						_1: _user$project$Main$simplelink_init(
+							{callsign: 'KI7EST', target: 'loopback'})
+					};
+				case 'SetCom':
+					return {
+						ctor: '_Tuple2',
+						_0: _user$project$Main$Main(_user$project$MainPage$init),
+						_1: _user$project$Main$simplelink_init(
+							{callsign: 'KI7EST', target: _p0._0._0})
+					};
+				default:
+					var _p1 = model;
+					if (_p1.ctor === 'Init') {
+						return {
+							ctor: '_Tuple2',
+							_0: _user$project$Main$Init(
+								A2(_user$project$InitPage$update, _p1._0, _p0._0)),
+							_1: _elm_lang$core$Platform_Cmd$none
+						};
+					} else {
+						return {ctor: '_Tuple2', _0: model, _1: _elm_lang$core$Platform_Cmd$none};
+					}
+			}
+		} else {
+			var _p2 = model;
+			if (_p2.ctor === 'Main') {
+				var _p3 = A2(_user$project$MainPage$update, _p0._0, _p2._0);
+				var modelRes = _p3._0;
+				var cmdRes = _p3._1;
+				return {
+					ctor: '_Tuple2',
+					_0: _user$project$Main$Main(modelRes),
+					_1: A2(
+						_elm_lang$core$Platform_Cmd$map,
+						function (cmd) {
+							return _user$project$Main$MainAction(cmd);
+						},
+						cmdRes)
+				};
+			} else {
+				return {ctor: '_Tuple2', _0: model, _1: _elm_lang$core$Platform_Cmd$none};
+			}
+		}
 	});
-var _user$project$Main$AckMsg = F2(
-	function (a, b) {
-		return {route: a, prn: b};
+var _user$project$Main$dispatch_link = F2(
+	function (msg, data) {
+		return _user$project$Main$MainAction(
+			_user$project$MainPage$Link(
+				msg(data)));
 	});
-var _user$project$Main$Observe = function (a) {
-	return {ctor: 'Observe', _0: a};
-};
-var _user$project$Main$Recv = function (a) {
-	return {ctor: 'Recv', _0: a};
-};
-var _user$project$Main$Ack = function (a) {
-	return {ctor: 'Ack', _0: a};
-};
-var _user$project$Main$Expire = function (a) {
-	return {ctor: 'Expire', _0: a};
-};
-var _user$project$Main$Retry = function (a) {
-	return {ctor: 'Retry', _0: a};
-};
 var _user$project$Main$subscriptions = function (model) {
 	return _elm_lang$core$Platform_Sub$batch(
 		{
 			ctor: '::',
-			_0: _user$project$Main$simplelink_retry(_user$project$Main$Retry),
+			_0: _user$project$Main$simplelink_retry(
+				_user$project$Main$dispatch_link(_user$project$SimpleLink$Retry)),
 			_1: {
 				ctor: '::',
-				_0: _user$project$Main$simplelink_expire(_user$project$Main$Expire),
+				_0: _user$project$Main$simplelink_expire(
+					_user$project$Main$dispatch_link(_user$project$SimpleLink$Expire)),
 				_1: {
 					ctor: '::',
-					_0: _user$project$Main$simplelink_ack(_user$project$Main$Ack),
+					_0: _user$project$Main$simplelink_ack(
+						_user$project$Main$dispatch_link(_user$project$SimpleLink$Ack)),
 					_1: {
 						ctor: '::',
-						_0: _user$project$Main$simplelink_recv_msg(_user$project$Main$Recv),
+						_0: _user$project$Main$simplelink_recv_msg(
+							_user$project$Main$dispatch_link(_user$project$SimpleLink$Recv)),
 						_1: {
 							ctor: '::',
-							_0: _user$project$Main$simplelink_obs_msg(_user$project$Main$Observe),
+							_0: _user$project$Main$simplelink_obs_msg(
+								_user$project$Main$dispatch_link(_user$project$SimpleLink$Observe)),
 							_1: {ctor: '[]'}
 						}
 					}
@@ -8049,54 +8301,35 @@ var _user$project$Main$subscriptions = function (model) {
 			}
 		});
 };
-var _user$project$Main$Decrement = {ctor: 'Decrement'};
-var _user$project$Main$Increment = {ctor: 'Increment'};
+var _user$project$Main$InitAction = function (a) {
+	return {ctor: 'InitAction', _0: a};
+};
 var _user$project$Main$view = function (model) {
+	var inner = function () {
+		var _p4 = model;
+		if (_p4.ctor === 'Init') {
+			return A2(
+				_user$project$InitPage$view,
+				_p4._0,
+				function (msg) {
+					return _user$project$Main$InitAction(msg);
+				});
+		} else {
+			return A2(
+				_user$project$MainPage$view,
+				_p4._0,
+				function (msg) {
+					return _user$project$Main$MainAction(msg);
+				});
+		}
+	}();
 	return A2(
 		_elm_lang$html$Html$div,
 		{ctor: '[]'},
 		{
 			ctor: '::',
-			_0: A2(
-				_elm_lang$html$Html$button,
-				{
-					ctor: '::',
-					_0: _elm_lang$html$Html_Events$onClick(_user$project$Main$Decrement),
-					_1: {ctor: '[]'}
-				},
-				{
-					ctor: '::',
-					_0: _elm_lang$html$Html$text('-'),
-					_1: {ctor: '[]'}
-				}),
-			_1: {
-				ctor: '::',
-				_0: A2(
-					_elm_lang$html$Html$div,
-					{ctor: '[]'},
-					{
-						ctor: '::',
-						_0: _elm_lang$html$Html$text(
-							_elm_lang$core$Basics$toString(model)),
-						_1: {ctor: '[]'}
-					}),
-				_1: {
-					ctor: '::',
-					_0: A2(
-						_elm_lang$html$Html$button,
-						{
-							ctor: '::',
-							_0: _elm_lang$html$Html_Events$onClick(_user$project$Main$Increment),
-							_1: {ctor: '[]'}
-						},
-						{
-							ctor: '::',
-							_0: _elm_lang$html$Html$text('+'),
-							_1: {ctor: '[]'}
-						}),
-					_1: {ctor: '[]'}
-				}
-			}
+			_0: inner,
+			_1: {ctor: '[]'}
 		});
 };
 var _user$project$Main$main = _elm_lang$html$Html$program(
