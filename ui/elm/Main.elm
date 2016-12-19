@@ -30,8 +30,10 @@ type Msg = InitAction(InitPage.Msg)
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
   case msg of
-    InitAction(InitPage.SetLoopback) -> (Main(MainPage.init), simplelink_init { callsign = "KI7EST", target = "loopback"})
-    InitAction(InitPage.SetCom source) -> (Main(MainPage.init), simplelink_init { callsign = "KI7EST", target = source })
+    InitAction(InitPage.SetLoopback(callsign)) ->
+      (Main(MainPage.init), simplelink_init { callsign = callsign, target = "loopback" })
+    InitAction(InitPage.SetCom { target, callsign }) -> 
+      (Main(MainPage.init), simplelink_init { callsign = callsign, target = target })
     InitAction(action) ->
       case model of
         Init(initModel) -> (Init(InitPage.update initModel action), Cmd.none)
@@ -40,7 +42,7 @@ update msg model =
       case model of
         Main(mainModel) ->
           let
-            (modelRes, cmdRes) = MainPage.update action mainModel
+            (modelRes, cmdRes) = MainPage.update action mainModel simplelink_send
           in
             (Main(modelRes), Cmd.map (\cmd -> MainAction cmd) cmdRes)
         _ -> (model, Cmd.none)
@@ -57,14 +59,13 @@ view model =
      [ inner ]
 
 -- OUTGOING
-type alias InitMsg = { target : String, callsign : String }
-
-port simplelink_init : InitMsg -> Cmd msg
+port simplelink_init : { target : String, callsign : String } -> Cmd msg
 port simplelink_send : SendMsg -> Cmd msg
 
 -- INCOMING
 port simplelink_recv_msg : (RecvMsg -> msg) -> Sub msg
 port simplelink_obs_msg : (RecvMsg -> msg) -> Sub msg
+port simplelink_send_msg : (SendMsg -> msg) -> Sub msg
 port simplelink_ack : (AckMsg -> msg) -> Sub msg
 port simplelink_retry : (PRN -> msg) -> Sub msg
 port simplelink_expire : (PRN -> msg) -> Sub msg
@@ -81,5 +82,6 @@ subscriptions model =
     simplelink_expire (dispatch_link SimpleLink.Expire),
     simplelink_ack (dispatch_link SimpleLink.Ack),
     simplelink_recv_msg (dispatch_link SimpleLink.Recv),
-    simplelink_obs_msg (dispatch_link SimpleLink.Observe)
+    simplelink_obs_msg (dispatch_link SimpleLink.Observe),
+    simplelink_send_msg (dispatch_link SimpleLink.Send)
   ]

@@ -102,7 +102,7 @@ impl Queue {
             D: FnMut(&frame::Frame, &[u8]),
             E: fmt::Debug
     {
-        trace!("Ticking send queue for {}ms", elapsed_ms);
+        //trace!("Ticking send queue for {}ms", elapsed_ms);
         let mut idx = 0;
         while idx < self.pending.len() {
             if self.pending[idx].next_send <= elapsed_ms {

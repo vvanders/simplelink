@@ -16,7 +16,7 @@ var rust = ffi.Library("../capi/target/debug/slink_capi.dll", {
   'open_loopback': ['bool', ['pointer'] ],
   'close': ['void', ['pointer']],
   'tick' : ['bool', ['pointer', 'uint'] ],
-  'send' : ['bool', ['pointer', 'pointer', 'pointer', 'uint'] ],
+  'send' : ['uint32', ['pointer', 'pointer', 'pointer', 'uint'] ],
   'release' : ['void', ['pointer'] ],
   'set_recv_callback' : ['void', ['pointer', 'pointer'] ],
   'set_ack_callback' : ['void', ['pointer', 'pointer'] ],
@@ -48,6 +48,7 @@ function route_to_arr(route) {
 // be closed automatically when the JavaScript object is garbage collected.
 let mainWindow
 let link
+let tick
 
 //Pin the callback so we don't GC it
 let recv_callback
@@ -59,6 +60,22 @@ let retry_callback
 electron.ipcMain.on('send', (event, msg) => {
   console.log("send")
   console.log(msg)
+
+  let data = Buffer.from(msg.msg)
+  let route = Buffer.alloc(4 * 15);
+  for(i = 0; i < msg.route.length; ++i ) {
+    route.writeInt32LE(rust.str_to_addr(msg.route[i]), i*4)
+  }
+
+  let prn = rust.send(link, route, data, data.length)
+
+  let sent = {
+    prn: prn,
+    route: msg.route,
+    msg: msg.msg
+  }
+
+  mainWindow.send('send', sent)
 })
 
 electron.ipcMain.on('init', (event, msg) => {
@@ -67,7 +84,7 @@ electron.ipcMain.on('init', (event, msg) => {
   let addr = rust.str_to_addr(msg.callsign)
   link = rust.new(addr)
 
-  var recv_callback = ffi.Callback('void', ['uint32*', 'uint32', 'char*', 'uint'],
+  recv_callback = ffi.Callback('void', ['uint32*', 'uint32', 'char*', 'uint'],
     function(routePtr, prn, dataPtr, size) {
       let data = ref.reinterpret(dataPtr, size)
       let route = ref.reinterpret(routePtr, 17 * 4)
@@ -85,7 +102,7 @@ electron.ipcMain.on('init', (event, msg) => {
     })
   rust.set_recv_callback(link, recv_callback)
 
-  var ack_callback = ffi.Callback('void', ['pointer', 'uint32'],
+  ack_callback = ffi.Callback('void', ['pointer', 'uint32'],
     function(routePtr, prn) {
       let route = ref.reinterpret(routePtr, 17 * 4)
       let translatedRoute = route_to_arr(route)
@@ -100,7 +117,7 @@ electron.ipcMain.on('init', (event, msg) => {
     })
   rust.set_ack_callback(link, ack_callback)
 
-  var obs_callback = ffi.Callback('void', ['pointer', 'uint32', 'pointer', 'uint'],
+  obs_callback = ffi.Callback('void', ['pointer', 'uint32', 'pointer', 'uint'],
     function(routePtr, prn, dataPtr, size) {
       let data = ref.reinterpret(dataPtr, size)
       let route = ref.reinterpret(routePtr, 17 * 4)
@@ -118,13 +135,13 @@ electron.ipcMain.on('init', (event, msg) => {
     })
   rust.set_observe_callback(link, obs_callback)
 
-  var expire_callback = ffi.Callback('void', ['uint32'],
+  expire_callback = ffi.Callback('void', ['uint32'],
     function(prn) {
       mainWindow.send('expire', prn)
     })
   rust.set_expire_callback(link, expire_callback)
 
-  var retry_callback = ffi.Callback('void', ['uint32'],
+  retry_callback = ffi.Callback('void', ['uint32'],
     function(prn) {
       mainWindow.send('retry', prn)
     })
@@ -135,6 +152,10 @@ electron.ipcMain.on('init', (event, msg) => {
   } else {
     rust.open_port(link, msg.target, 0)
   }
+
+  tick = setInterval(() => {
+    rust.tick(link, 33)
+  })
 })
 
 function createWindow () {
@@ -149,19 +170,6 @@ function createWindow () {
   }))
 
   mainWindow.webContents.once('did-finish-load', () => {
-    /*
-    rust.open_loopback(link)
-
-    {
-      let msg = Buffer.from("Foo")
-      let route = Buffer.alloc(4 * 15)
-      route.writeUInt32LE(addr)
-
-      rust.send(link, route, msg, msg.length)
-    }
-
-    rust.tick(link, 0)
-    */
   })
   // Open the DevTools.
   //mainWindow.webContents.openDevTools()
@@ -188,7 +196,10 @@ app.on('window-all-closed', function () {
     app.quit()
   }
 
-  rust.release(link)
+  if(link != null) {
+    rust.release(link)
+    clearInterval(tick)
+  }
 })
 
 app.on('activate', function () {

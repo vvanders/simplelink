@@ -20,6 +20,9 @@
       ipcRenderer.on('observe', (event, arg) => {
         app.ports.simplelink_obs_msg.send(arg)
       })
+      ipcRenderer.on('send', (event, arg) => {
+        app.ports.simplelink_send_msg.send(arg)
+      })
       ipcRenderer.on('ack', (event, arg) => {
         app.ports.simplelink_ack.send(arg)
       })
