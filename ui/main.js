@@ -49,6 +49,7 @@ function route_to_arr(route) {
 let mainWindow
 let link
 let tick
+let last_update = Date.now();
 
 //Pin the callback so we don't GC it
 let recv_callback
@@ -154,8 +155,13 @@ electron.ipcMain.on('init', (event, msg) => {
   }
 
   tick = setInterval(() => {
-    rust.tick(link, 33)
-  })
+    let now = Date.now()
+    let elapsed = now - last_update
+
+    last_update = now
+
+    rust.tick(link, elapsed)
+  }, 33)
 })
 
 function createWindow () {
