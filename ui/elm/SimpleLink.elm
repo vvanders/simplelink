@@ -1,6 +1,12 @@
 module SimpleLink exposing (..)
 
-type Msg = Retry PRN
+retry_timeout : Int
+retry_timeout = 500
+
+retry_count : Int
+retry_count = 4
+
+type Msg = Retry RetryMsg
   | Expire PRN
   | Ack AckMsg
   | Recv RecvMsg
@@ -8,6 +14,11 @@ type Msg = Retry PRN
   | Send SendMsg
 
 type alias PRN = Int
+
+type alias RetryMsg = {
+  prn: Int,
+  next_retry: Int
+}
 
 type alias RecvMsg = {
   route : List String,

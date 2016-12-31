@@ -31,14 +31,36 @@ function addr_to_str(addr) {
   var buffer = Buffer.alloc(7)
   rust.addr_to_str(addr, buffer)
 
-  return buffer.toString()
+  var output = buffer.toString()
+
+  //Trim any trailing zeros
+  var trim = 0;
+
+  while(output.charAt(output.length - trim - 1) == '0') {
+    ++trim
+  }
+
+  if (trim == output.length) {
+    return ""
+  } else {
+    return output.substr(0, output.length - trim)
+  }
 }
 
 function route_to_arr(route) {
   var translatedRoute = []
+
+  var splitIdx = -1
   for(var i = 0; i < 17; ++i) {
     let translated = addr_to_str(route.readInt32LE(i*4))
-    translatedRoute.push(translated)
+
+    if(splitIdx == -1 || translated.length > 0) {
+      translatedRoute.push(translated)
+    }
+
+    if(translated.length == 0 && splitIdx == -1) {
+      splitIdx = i
+    }
   }
 
   return translatedRoute
@@ -142,9 +164,9 @@ electron.ipcMain.on('init', (event, msg) => {
     })
   rust.set_expire_callback(link, expire_callback)
 
-  retry_callback = ffi.Callback('void', ['uint32'],
-    function(prn) {
-      mainWindow.send('retry', prn)
+  retry_callback = ffi.Callback('void', ['uint32', 'uint32'],
+    function(prn, next_retry) {
+      mainWindow.send('retry', { 'prn': prn, 'next_retry': next_retry })
     })
   rust.set_retry_callback(link, retry_callback)
 

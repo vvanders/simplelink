@@ -5,6 +5,8 @@ import MainPage
 import SimpleLink exposing (..)
 
 import Html exposing (Html, button, div, text)
+import Time exposing (Time)
+import AnimationFrame
 
 main : Program Never Model Msg
 main =
@@ -26,6 +28,7 @@ model =
 -- UPDATE
 type Msg = InitAction(InitPage.Msg) 
   | MainAction(MainPage.Msg)
+  | Animate(Time)
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
@@ -43,6 +46,14 @@ update msg model =
         Main(mainModel) ->
           let
             (modelRes, cmdRes) = MainPage.update action mainModel simplelink_send
+          in
+            (Main(modelRes), Cmd.map (\cmd -> MainAction cmd) cmdRes)
+        _ -> (model, Cmd.none)
+    Animate(time) -> 
+      case model of
+        Main(mainModel) ->
+          let
+            (modelRes, cmdRes) = MainPage.update (MainPage.Animate(time)) mainModel simplelink_send
           in
             (Main(modelRes), Cmd.map (\cmd -> MainAction cmd) cmdRes)
         _ -> (model, Cmd.none)
@@ -67,7 +78,7 @@ port simplelink_recv_msg : (RecvMsg -> msg) -> Sub msg
 port simplelink_obs_msg : (RecvMsg -> msg) -> Sub msg
 port simplelink_send_msg : (SendMsg -> msg) -> Sub msg
 port simplelink_ack : (AckMsg -> msg) -> Sub msg
-port simplelink_retry : (PRN -> msg) -> Sub msg
+port simplelink_retry : (RetryMsg -> msg) -> Sub msg
 port simplelink_expire : (PRN -> msg) -> Sub msg
 
 -- SUBSCRIPTIONS
@@ -83,5 +94,6 @@ subscriptions model =
     simplelink_ack (dispatch_link SimpleLink.Ack),
     simplelink_recv_msg (dispatch_link SimpleLink.Recv),
     simplelink_obs_msg (dispatch_link SimpleLink.Observe),
-    simplelink_send_msg (dispatch_link SimpleLink.Send)
+    simplelink_send_msg (dispatch_link SimpleLink.Send),
+    AnimationFrame.diffs Animate
   ]

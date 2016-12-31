@@ -12,7 +12,7 @@ pub const CONGEST_CONTROL: usize = 35 * 1024;
 /// Number of times a packet will attempt to retry
 pub const RETRY_COUNT: usize = 4;
 /// Number of milliseconds until we will resend an un-ack'd packet. Grows proportional to the number of retries.
-pub const RETRY_DELAY_MS: usize = 100;
+pub const RETRY_DELAY_MS: usize = 500;
 
 /// Queue of packets waiting to be recieved
 pub struct Queue {
@@ -98,7 +98,7 @@ impl Queue {
     // Check any packets that have expired, resend is called on packets we want to retry, discard on packets that have exceeded the retry count
     pub fn tick<R,D,E>(&mut self, elapsed_ms: usize, mut retry: R, mut discard: D) -> Result<(),E>
         where
-            R: FnMut(&frame::Frame, &[u8]) -> Result<(),E>,
+            R: FnMut(&frame::Frame, &[u8], usize) -> Result<(),E>,
             D: FnMut(&frame::Frame, &[u8]),
             E: fmt::Debug
     {
@@ -117,18 +117,19 @@ impl Queue {
                     //from being sent so we won't hang the whole link
                     self.pending[idx].retry_count += 1;
 
-                    match retry(&self.pending[idx].packet, self.get_packet_data(&self.pending[idx])) {
+                    //Determine when we want to retry again. Note that we randomize so two transmitters won't collide
+                    use rand::distributions::IndependentSample;
+                    let rnd = rand::distributions::Range::new(0.0, 1.0).ind_sample(&mut rand::thread_rng());
+                    let next_send = ((1.0 + self.pending[idx].retry_count as f32 * rnd) * RETRY_DELAY_MS as f32) as usize;
+                    self.pending[idx].next_send = next_send;
+
+                    match retry(&self.pending[idx].packet, self.get_packet_data(&self.pending[idx]), next_send) {
                         Ok(()) => (),
                         Err(e) => {
                             trace!("Error retrying packet {:?}, incrementing retry counter and aborting", &e);
                             return Err(e)
                         }
                     }
-
-                    //Determine when we want to retry again. Note that we randomize so two transmitters won't collide
-                    use rand::distributions::IndependentSample;
-                    let rnd = rand::distributions::Range::new(0.0, 1.0).ind_sample(&mut rand::thread_rng());
-                    self.pending[idx].next_send = ((1.0 + self.pending[idx].retry_count as f32 * rnd) * RETRY_DELAY_MS as f32) as usize;
                 }
 
                 //Discard our packet if we've flagged it for discarding

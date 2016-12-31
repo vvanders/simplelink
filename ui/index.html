@@ -27,7 +27,6 @@
         app.ports.simplelink_ack.send(arg)
       })
       ipcRenderer.on('retry', (event, arg) => {
-        console.log("retry " + arg)
         app.ports.simplelink_retry.send(arg)
       })
       ipcRenderer.on('expire', (event, arg) => {

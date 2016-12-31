@@ -303,18 +303,18 @@ impl Node {
     pub fn tick<T,R,D>(&mut self, tx_drain: &mut T, elapsed_ms: usize, mut retry_drain: R, discard_drain: D) -> Result<(), SendError>
         where
             T: io::Write,
-            R: FnMut(&frame::Frame, &[u8]),
+            R: FnMut(&frame::Frame, &[u8], usize),
             D: FnMut(&frame::Frame, &[u8]),
     {
         try!(self.tx_queue.tick::<_,_,SendError>(elapsed_ms,
-            |header, data| {
+            |header, data, next_retry| {
                 trace!("Packet {} retrying", header.prn);
 
                 //Retry our frame
                 try!(frame::to_bytes(tx_drain, header, Some(data)));
 
                 //Notify client that we resent
-                retry_drain(header, data);
+                retry_drain(header, data, next_retry);
 
                 Ok(())
             },

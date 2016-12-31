@@ -19,7 +19,7 @@ pub struct Link {
     recv_callback: Option<extern "C" fn(*const u32, u32, *const u8, usize)>,
     ack_callback: Option<extern "C" fn(*const u32, u32)>,
     expire_callback: Option<extern "C" fn(u32)>,
-    retry_callback: Option<extern "C" fn(u32)>,
+    retry_callback: Option<extern "C" fn(u32, u32)>,
     observe_callback: Option<extern "C" fn(*const u32, u32, *const u8, usize)>,
 }
 
@@ -152,9 +152,9 @@ pub unsafe extern "C" fn tick(link: *mut Link, elapsed: usize) -> bool {
             }
 
             match (*link).link.tick(rx_tx, elapsed, 
-                    |frame,_| {
+                    |frame, _, next_retry| {
                         match (*link).retry_callback {
-                            Some(retry) => retry(frame.prn),
+                            Some(retry) => retry(frame.prn, next_retry as u32),
                             None => ()
                         }
                     },
@@ -181,7 +181,10 @@ pub unsafe extern "C" fn tick(link: *mut Link, elapsed: usize) -> bool {
 pub unsafe extern "C" fn send(link: *mut Link, dest: *const u32, data: *const u8, size: usize) -> u32 {
     match (*link).rx_tx {
         Some(ref mut rx_tx) => {
-            match (*link).link.send_slice(std::slice::from_raw_parts(data, size), std::slice::from_raw_parts(dest, 15).iter().cloned(), rx_tx) {
+            let route = std::slice::from_raw_parts(dest, 15).iter().cloned()
+                .filter(|addr| *addr != 0);
+
+            match (*link).link.send_slice(std::slice::from_raw_parts(data, size), route, rx_tx) {
                 Ok(prn) => prn,
                 Err(e) => {
                     println!("Error sending {:?}", e);
@@ -214,7 +217,7 @@ pub unsafe extern "C" fn set_expire_callback(link: *mut Link, callback: extern "
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn set_retry_callback(link: *mut Link, callback: extern "C" fn(u32)) {
+pub unsafe extern "C" fn set_retry_callback(link: *mut Link, callback: extern "C" fn(u32, u32)) {
     (*link).retry_callback = Some(callback);
 }
 
