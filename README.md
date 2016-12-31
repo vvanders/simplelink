@@ -6,6 +6,7 @@ This library is a Rust-based implementation of a message protocal over KISS TNCs
 Features:
 * CRC verification of message contents.
 * Automatic retry with progressive back-off.
+* Congestion control when channel is overloaded.
 * Confirmation of receipt.
 * Broadcast and per node routing scheme up to 16 addresses.
 * Low overhead Rust implementation with minimal allocation.
