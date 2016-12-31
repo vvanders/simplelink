@@ -13,6 +13,6 @@ This library is a Rust-based implementation of a message protocal over KISS TNCs
 * Electron based, cross-platform UI.
 
 ## Supported TNCs
-* Mobilinkd Bluetooth TNC - http://www.mobilinkd.com/
+* [Mobilinkd Bluetooth TNC](http://www.mobilinkd.com/)
 * Kenwood TM-D710
-* KISS compliant TNC
+* [KISS](https://en.wikipedia.org/wiki/KISS_(TNC)) compliant TNC
