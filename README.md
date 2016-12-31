@@ -8,7 +8,7 @@ This library is a Rust-based implementation of a message protocal over KISS TNCs
 * Automatic retry with progressive back-off.
 * Congestion control.
 * Confirmation of receipt.
-* Broadcast and per node routing scheme up to 16 addresses.
+* Broadcast and per node routing scheme of up to 16 addresses.
 * Low overhead Rust implementation with minimal allocation.
 * Electron based, cross-platform UI.
 
