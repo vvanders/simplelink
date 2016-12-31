@@ -17,4 +17,4 @@ This library is a Rust-based implementation of a message protocal over KISS TNCs
 * Kenwood TM-D710
 * [KISS](https://en.wikipedia.org/wiki/KISS_(TNC)) compliant TNC
 
-### Note: This project is still in an early stage. It is not yet production qaulity, use at your own risk.
+### Note: This project is still in an early stage. It is not yet production quality, use at your own risk.
