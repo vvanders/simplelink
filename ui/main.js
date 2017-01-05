@@ -10,9 +10,8 @@ const url = require('url')
 const ffi = require('ffi')
 const ref = require('ref')
 
-var rust = ffi.Library("../capi/target/debug/slink_capi.dll", {
+var rust = ffi.Library("../capi/target/debug/slink.dll", {
   'new': ['pointer', ['uint32'] ],
-  'open_port': ['bool', ['pointer', 'string', 'uint'] ],
   'open_loopback': ['bool', ['pointer'] ],
   'close': ['void', ['pointer']],
   'tick' : ['bool', ['pointer', 'uint'] ],
@@ -25,6 +24,10 @@ var rust = ffi.Library("../capi/target/debug/slink_capi.dll", {
   'set_observe_callback' : ['void', ['pointer', 'pointer'] ],
   'str_to_addr' : ['uint32', ['string'] ],
   'addr_to_str' : ['void', ['uint32', 'pointer']]
+})
+
+var rust_serial = ffi.Library("../capi_serial/target/debug/slink_serial.dll", {
+  'open_port': ['bool', ['pointer', 'string', 'uint'] ],
 })
 
 function addr_to_str(addr) {
@@ -173,7 +176,7 @@ electron.ipcMain.on('init', (event, msg) => {
   if(msg.target == "loopback") {
     rust.open_loopback(link)
   } else {
-    rust.open_port(link, msg.target, 0)
+    rust_serial.open_port(link, msg.target, 0)
   }
 
   tick = setInterval(() => {

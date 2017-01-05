@@ -1,13 +1,13 @@
 [package]
-name = "slink_capi"
+name = "slink_serial"
 version = "0.1.0"
 authors = ["Val Vanderschaegen <valere.vanderschaegen@gmail.com>"]
 
 [dependencies]
 libc = "0.2.17"
-log = "0.3.6"
-simplelink = { path = "../" }
+serial = "0.3"
+slink_capi = { path = "../capi" }
 
 [lib]
-name = "slink"
-crate-type = ["cdylib", "lib"]
+name = "slink_serial"
+crate-type = ["cdylib"]

@@ -11,7 +11,8 @@ import Time exposing (Time, millisecond)
 type alias Model = {
     messages : List Message,
     outgoing_msg : String,
-    outgoing_route : List String
+    outgoing_route : List String,
+    known_callsigns : List String
 }
 
 type alias Pending = {
@@ -47,7 +48,8 @@ init : Model
 init = {
         messages = [],
         outgoing_msg = "",
-        outgoing_route = [""]
+        outgoing_route = [""],
+        known_callsigns = []
     }
 
 update : Msg -> Model -> (SimpleLink.SendMsg -> Cmd msg) -> (Model, Cmd msg)
@@ -58,14 +60,16 @@ update msg model send =
                 SimpleLink.Recv(packet) ->
                     let
                         message = createMessage packet Received
+                        kc = parseKnownCallsigns message.route model.known_callsigns
                     in
-                        ({ model | messages = model.messages ++ [message] }, Cmd.none)
+                        ({ model | messages = model.messages ++ [message], known_callsigns = kc }, Cmd.none)
                 SimpleLink.Observe(packet) ->
                     let
                         message = createMessage packet Observed
+                        kc = parseKnownCallsigns message.route model.known_callsigns
                     in
                         if packet.msg /= "" then --Don't observe acks
-                            ({ model | messages = model.messages ++ [message] }, Cmd.none)
+                            ({ model | messages = model.messages ++ [message], known_callsigns = kc }, Cmd.none)
                         else
                             (model, Cmd.none)
                 SimpleLink.Send(packet) ->
@@ -87,8 +91,9 @@ update msg model send =
                                 _ -> item
                             )
                             model.messages
+                        kc = parseKnownCallsigns ack.route model.known_callsigns
                     in
-                        ({ model | messages = messages }, Cmd.none)
+                        ({ model | messages = messages, known_callsigns = kc }, Cmd.none)
                 SimpleLink.Retry(msg) ->
                     let
                         messages = updateMessage msg.prn
@@ -143,7 +148,7 @@ update msg model send =
                         Sent(PendingAck status) -> { item 
                             | source = Sent( PendingAck { status 
                                 | elapsed_retry = status.elapsed_retry + ceiling (time * millisecond),
-                                    elapsed_total = status.elapsed_total + ceiling (time * millisecond) } ) }
+                                  elapsed_total = status.elapsed_total + ceiling (time * millisecond) } ) }
                         _ -> item
                 ) model.messages
             in
@@ -168,6 +173,13 @@ updateMessage prn update messages =
             item
     )
     messages
+
+parseKnownCallsigns : List String -> List String -> List String
+parseKnownCallsigns callsigns model =
+    let
+        new = List.filter (\item -> not (List.member item model) && item /= "") callsigns
+    in
+        model ++ new
 
 view : Model -> (Msg -> a) -> Html a
 view model conv =
