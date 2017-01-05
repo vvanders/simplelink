@@ -1,5 +1,5 @@
 [package]
-name = "slconsole"
+name = "slink_repeater"
 version = "0.1.0"
 authors = ["Val Vanderschaegen <valere.vanderschaegen@gmail.com>"]
 
@@ -9,8 +9,6 @@ serial = "0.3"
 log = "0.3.6"
 time = "0.1.35"
 clap = "2.9.0"
-pdcurses-sys = "0.3.0"
 
 [[bin]]
-name = "slconsole"
-path = "src/main.rs"
+name = "slink_repeater"
