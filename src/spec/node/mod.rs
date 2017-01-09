@@ -103,7 +103,7 @@ impl From<SendError> for RecvError {
 
 /// Constructs a new SimpleLink node that can be used to communicate with other SimpleLink nodes
 pub fn new(callsign: u32) -> Node {
-    trace!("New link created with callsign {:?}", address::decode(callsign));
+    info!("New link created with callsign {:?}", address::decode(callsign));
 
     Node {
         prn: prn_id::new(callsign),

@@ -1,0 +1,3 @@
+[target.armv7-linux-androideabi]
+ar = "C:/android-ndk-sa/bin/arm-linux-androideabi-ar"
+linker = "C:/android-ndk-sa/bin/arm-linux-androideabi-gcc"

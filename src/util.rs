@@ -5,32 +5,44 @@ use time;
 use std::io;
 
 pub fn init_log(trace: log::LogLevelFilter) {
-    init_log_callback(trace, |msg: &str, level: &log::LogLevel, _location: &log::LogLocation| {
-            format!("[{}] {}", level, msg)
-        });
+    init_log_callback(trace, true, |_msg: &str, _level: &log::LogLevel, _location: &log::LogLocation| {});
 }
 
-pub fn init_log_callback<D>(trace: log::LogLevelFilter, dispatch: D) 
-        where D: Fn(&str, &log::LogLevel, &log::LogLocation) -> String + Send + Sync + 'static {
+pub fn init_log_callback<D>(trace: log::LogLevelFilter, log_file: bool, dispatch: D) 
+        where D: Fn(&str, &log::LogLevel, &log::LogLocation) + Send + Sync + 'static {
+    struct Logger {
+        log: Box<Fn(&str, &log::LogLevel, &log::LogLocation) + Send + Sync + 'static>
+    }
+
+    impl fern::Logger for Logger {
+        fn log(&self, msg: &str, level: &log::LogLevel, location: &log::LogLocation) -> Result<(), fern::LogError> {
+            (self.log)(msg, level, location);
+            Ok(())
+        }
+    }
+
     //Print is gated by trace level
     let print_logger = fern::DispatchConfig {
-        format: Box::new(dispatch),
-        output: vec![fern::OutputConfig::stdout()],
+        format: Box::new(|msg, _, _| msg.to_string()),
+        output: vec![fern::OutputConfig::stdout(), fern::OutputConfig::custom(Box::new(Logger { log: Box::new(dispatch) }))],
         level: trace,
     };
-
+   
     //Always log trace to the file with a bit more info
-    let file_logger = fern::DispatchConfig {
-        format: Box::new(|msg: &str, level: &log::LogLevel, _location: &log::LogLocation| {
-            //Log unique MS time and date
-            format!("[{}][{}][{}] {}", time::precise_time_ns() / 1_000_000, time::now().strftime("%Y-%m-%d][%H:%M:%S").unwrap(), level, msg)
-        }),
-        output: vec![fern::OutputConfig::file("output.log"), fern::OutputConfig::child(print_logger)],
-        level: log::LogLevelFilter::Trace,
+    let final_logger = if log_file {
+        fern::DispatchConfig {
+            format: Box::new(|msg: &str, level: &log::LogLevel, _location: &log::LogLocation| {
+                //Log unique MS time and date
+                format!("[{}][{}][{}] {}", time::precise_time_ns() / 1_000_000, time::now().strftime("%Y-%m-%d][%H:%M:%S").unwrap(), level, msg)
+            }),
+            output: vec![fern::OutputConfig::file("output.log"), fern::OutputConfig::child(print_logger)],
+            level: log::LogLevelFilter::Trace,
+        }
+    } else {
+        print_logger
     };
 
-
-    if let Err(e) = fern::init_global_logger(file_logger, log::LogLevelFilter::Trace) {
+    if let Err(e) = fern::init_global_logger(final_logger, log::LogLevelFilter::Trace) {
         panic!("Failed to initialize global logger: {}", e);
     }
 }

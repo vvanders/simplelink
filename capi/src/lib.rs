@@ -1,4 +1,5 @@
 extern crate libc;
+#[macro_use]
 extern crate log;
 extern crate simplelink;
 
@@ -13,7 +14,7 @@ impl<T> ReadWrite for T where T: io::Write + io::Read {}
 pub struct Link {
     link: simplelink::spec::node::Node,
 
-    pub rx_tx: Option<Box<ReadWrite>>,
+    rx_tx: Option<Box<ReadWrite>>,
 
     recv_callback: Option<extern "C" fn(*const u32, u32, *const u8, usize)>,
     ack_callback: Option<extern "C" fn(*const u32, u32)>,
@@ -26,6 +27,11 @@ pub struct Link {
 pub unsafe extern "C" fn new(callsign: u32) -> *mut Link {
     simplelink::util::init_log(log::LogLevelFilter::Trace);
 
+    new_nolog(callsign)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn new_nolog(callsign: u32) -> *mut Link {
     let boxed = Box::new(Link {
         link: simplelink::spec::node::new(callsign),
         rx_tx: None,
@@ -39,13 +45,16 @@ pub unsafe extern "C" fn new(callsign: u32) -> *mut Link {
     Box::into_raw(boxed)
 }
 
+pub unsafe fn set_rx_tx(link: *mut Link, rx_tx: Box<ReadWrite>) {
+    (*link).rx_tx = Some(rx_tx);
+}
 
 
 #[no_mangle]
 pub unsafe extern "C" fn open_loopback(link: *mut Link) -> bool {
     (*link).rx_tx = Some(Box::new(echo::new()));
 
-    println!("Opened loopback port");
+    trace!("Opened loopback port");
 
     true
 }
@@ -81,7 +90,7 @@ pub unsafe extern "C" fn tick(link: *mut Link, elapsed: usize) -> bool {
                     }) {
                 Ok(()) => (),
                 Err(e) => {
-                    println!("Error recieving {:?}", e);
+                    trace!("Error recieving {:?}", e);
                     return false
                 }
             }
@@ -101,7 +110,7 @@ pub unsafe extern "C" fn tick(link: *mut Link, elapsed: usize) -> bool {
                     }) {
                 Ok(()) => (),
                 Err(e) => {
-                    println!("Error updating {:?}", e);
+                    trace!("Error updating {:?}", e);
                     return false
                 }
             }
@@ -122,7 +131,7 @@ pub unsafe extern "C" fn send(link: *mut Link, dest: *const u32, data: *const u8
             match (*link).link.send_slice(std::slice::from_raw_parts(data, size), route, rx_tx) {
                 Ok(prn) => prn,
                 Err(e) => {
-                    println!("Error sending {:?}", e);
+                    trace!("Error sending {:?}", e);
                     0
                 }
             }
@@ -166,7 +175,7 @@ pub unsafe extern "C" fn str_to_addr(addr: *const libc::c_char) -> u32 {
     let addr_str = match ffi::CStr::from_ptr(addr).to_str() {
         Ok(s) => s,
         Err(e) => {
-            println!("Unablet to convert addr {:?}", e);
+            trace!("Unablet to convert addr {:?}", e);
             return 0
         }
     };
@@ -185,6 +194,17 @@ pub unsafe extern "C" fn str_to_addr(addr: *const libc::c_char) -> u32 {
 }
 
 #[no_mangle]
+#[cfg(target_os = "android")]
+pub unsafe extern "C" fn addr_to_str(addr: u32, out_str: *mut libc::c_char) {
+    let decoded = simplelink::spec::address::decode(addr);
+
+    for (i, chr) in decoded.iter().enumerate() {
+        *out_str.offset(i as isize) = *chr as u8;
+    }
+}
+
+#[no_mangle]
+#[cfg(not(target_os = "android"))]
 pub unsafe extern "C" fn addr_to_str(addr: u32, out_str: *mut libc::c_char) {
     let decoded = simplelink::spec::address::decode(addr);
 
