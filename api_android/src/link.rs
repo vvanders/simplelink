@@ -51,7 +51,6 @@ impl Link {
 
         let recv_res = self.node.recv(&mut rx_tx,
             |frame, data| {
-                trace!("VALLOG OBS {}", data.len());
                 if data.len() == 0 {
                     env.call_method(obj, "internal_ack", "(I)V", &[JValue::Int(frame.prn as jint)]).unwrap_or(JValue::Void);
                 } else {
