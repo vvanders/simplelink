@@ -1,5 +1,5 @@
 [package]
-name = "capi_android"
+name = "api_android"
 version = "0.1.0"
 authors = ["Val Vanderschaegen <valere.vanderschaegen@gmail.com>"]
 
@@ -8,7 +8,6 @@ libc = "0.2.17"
 log = "0.3.6"
 fern = "0.3.5"
 jni = { path = "external/jni-rs" }
-slink_capi = { path = "../capi" }
 simplelink = { path = "../" }
 
 [lib]

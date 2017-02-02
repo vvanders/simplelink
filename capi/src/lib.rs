@@ -21,6 +21,12 @@ pub struct Link {
     expire_callback: Option<extern "C" fn(u32)>,
     retry_callback: Option<extern "C" fn(u32, u32)>,
     observe_callback: Option<extern "C" fn(*const u32, u32, *const u8, usize)>,
+
+    recv_box_cb: Option<Box<Fn([u32; simplelink::spec::routing::MAX_LENGTH], u32, &[u8])>>,
+    ack_box_cb: Option<Box<Fn([u32; simplelink::spec::routing::MAX_LENGTH], u32)>>,
+    expire_box_cb: Option<Box<Fn(u32)>>,
+    retry_box_cb: Option<Box<Fn(u32, usize)>>,
+    observe_box_cb: Option<Box<Fn([u32; simplelink::spec::routing::MAX_LENGTH], u32, &[u8])>>,
 }
 
 #[no_mangle]
@@ -39,7 +45,13 @@ pub unsafe extern "C" fn new_nolog(callsign: u32) -> *mut Link {
         ack_callback: None,
         expire_callback: None,
         retry_callback: None,
-        observe_callback: None
+        observe_callback: None,
+
+        recv_box_cb: None,
+        ack_box_cb: None,
+        expire_box_cb: None,
+        retry_box_cb: None,
+        observe_box_cb: None
     });
 
     Box::into_raw(boxed)
@@ -73,19 +85,28 @@ pub unsafe extern "C" fn tick(link: *mut Link, elapsed: usize) -> bool {
                         if data.len() != 0 {
                             match (*link).recv_callback {
                                 Some(recv) => recv(frame.address_route.as_ptr(), frame.prn, data.as_ptr(), data.len()),
-                                None => ()
+                                None => match (*link).recv_box_cb {
+                                    Some(ref recv) => recv(frame.address_route, frame.prn, data),
+                                    None => ()
+                                }
                             }
                         } else {
                             match (*link).ack_callback {
                                 Some(ack) => ack(frame.address_route.as_ptr(), frame.prn),
-                                None => ()
+                                None => match (*link).ack_box_cb {
+                                    Some(ref ack) => ack(frame.address_route, frame.prn),
+                                    None => ()
+                                }
                             }
                         }
                     },
                     |frame,data| {
                        match (*link).observe_callback {
                             Some(obs) => obs(frame.address_route.as_ptr(), frame.prn, data.as_ptr(), data.len()),
-                            None => ()
+                            None => match (*link).observe_box_cb {
+                                Some(ref obs) => obs(frame.address_route, frame.prn, data),
+                                None => ()
+                            }
                         }
                     }) {
                 Ok(()) => (),
@@ -99,13 +120,19 @@ pub unsafe extern "C" fn tick(link: *mut Link, elapsed: usize) -> bool {
                     |frame, _, next_retry| {
                         match (*link).retry_callback {
                             Some(retry) => retry(frame.prn, next_retry as u32),
-                            None => ()
+                            None => match (*link).retry_box_cb {
+                                Some(ref retry) => retry(frame.prn, next_retry),
+                                None => ()
+                            }
                         }
                     },
                     |frame,_| {
                         match (*link).expire_callback {
-                            Some(retry) => retry(frame.prn),
-                            None => ()
+                            Some(expire) => expire(frame.prn),
+                            None => match (*link).expire_box_cb {
+                                Some(ref expire) => expire(frame.prn),
+                                None => ()
+                            }
                         }
                     }) {
                 Ok(()) => (),
@@ -168,6 +195,26 @@ pub unsafe extern "C" fn set_retry_callback(link: *mut Link, callback: extern "C
 #[no_mangle]
 pub unsafe extern "C" fn set_observe_callback(link: *mut Link, callback: extern "C" fn(*const u32, u32, *const u8, usize)) {
     (*link).observe_callback = Some(callback);
+}
+
+pub unsafe fn set_recv_box_cb<T>(link: *mut Link, callback: T) where T: Fn([u32; simplelink::spec::routing::MAX_LENGTH], u32, &[u8]) + 'static {
+    (*link).recv_box_cb = Some(Box::new(callback))
+}
+
+pub unsafe fn set_ack_box_cb<T>(link: *mut Link, callback: T) where T: Fn([u32; simplelink::spec::routing::MAX_LENGTH], u32) + 'static {
+    (*link).ack_box_cb = Some(Box::new(callback))
+}
+
+pub unsafe fn set_expire_box_cb<T>(link: *mut Link, callback: T) where T: Fn(u32) + 'static {
+    (*link).expire_box_cb = Some(Box::new(callback))
+}
+
+pub unsafe fn set_retry_box_cb<T>(link: *mut Link, callback: T) where T: Fn(u32, usize) + 'static {
+    (*link).retry_box_cb = Some(Box::new(callback))
+}
+
+pub unsafe fn set_observe_box_cb<T>(link: *mut Link, callback: T) where T: Fn([u32; simplelink::spec::routing::MAX_LENGTH], u32, &[u8]) + 'static {
+    (*link).observe_box_cb = Some(Box::new(callback))
 }
 
 #[no_mangle]

@@ -1,0 +1,4 @@
+[submodule "api_android/external/jni-rs"]
+	path = api_android/external/jni-rs
+	url = https://github.com/vvanders/jni-rs.git
+	branch = array
