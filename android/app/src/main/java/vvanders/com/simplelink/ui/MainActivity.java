@@ -12,6 +12,7 @@ import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ListView;
+import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.Spinner;
 import android.widget.TextView;
@@ -78,7 +79,7 @@ public class MainActivity extends AppCompatActivity {
         btSpinner.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, items));
 
         final EditText callsignText = (EditText)inner.findViewById(R.id.text_callsign);
-        final RadioGroup rgSource = (RadioGroup)inner.findViewById(R.id.radiogroup_source);
+        final RadioButton rbBT = (RadioButton) inner.findViewById(R.id.radio_bt);
 
         builder.setView(inner)
             .setTitle("Connect")
@@ -87,15 +88,10 @@ public class MainActivity extends AppCompatActivity {
                 public void onClick(DialogInterface dialog, int which) {
                     String sourceTarget = "";
                     Source source = Source.Loopback;
-                    switch(rgSource.getCheckedRadioButtonId()) {
-                        case R.id.radio_loopback:
-                            source = Source.Loopback;
-                            break;
 
-                        case R.id.radio_bt:
-                            source = Source.Bluetooth;
-                            sourceTarget = (String)btSpinner.getSelectedItem();
-                            break;
+                    if(rbBT.isChecked()) {
+                        source = Source.Bluetooth;
+                        sourceTarget = (String)btSpinner.getSelectedItem();
                     }
 
                     init(callsignText.getText().toString(), source, sourceTarget);

@@ -52,7 +52,7 @@ public class LinkThread {
     private void internalConnectBluetooth(String deviceName) {
         mBTDevice = getBluetoothDevice(deviceName);
 
-        if(mBTDevice != null) {
+        if(mBTDevice == null) {
             notifyConnectionFailure("Unable to find bluetooth device " + deviceName);
             return;
         }
